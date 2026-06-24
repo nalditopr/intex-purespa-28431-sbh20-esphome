@@ -32,6 +32,20 @@ cleanly. Two Windows-only gotchas if you build there:
   as an empty stub (missing the WiFi/PHY blobs → `cannot find -lcore/-lphy/...`).
   Re-run the platform install if you see that.
 
+## Power
+
+Measured on the bench (Atom Lite, WiFi connected, `output_power: 12dB` +
+`power_save_mode: light`):
+
+| State | Current @ 5 V |
+|-------|---------------|
+| Steady | **~66 mA** (0.05–0.07 A) |
+| WiFi TX peaks | **~110–120 mA** |
+
+Light enough to run off the spa's 5 V tap with margin. **Fuse the 5 V line at
+~250 mA slow-blow** (≈2× the peak). A **10 µF** cap across the Atom 5V/GND smooths
+the TX spikes — nothing larger needed.
+
 ## Why ESP32 makes sense here
 
 The SB-H20 button protocol is timing-critical (pull DATA low for ~2 µs after the
