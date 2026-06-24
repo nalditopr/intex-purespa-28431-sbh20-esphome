@@ -10,6 +10,10 @@ panel — the upstream components are ESP8266 (`piitaya`) or RP2040/Pico W
 > real spa yet. Test on the bench/at the spa before trusting it. Findings and
 > fixes welcome.
 
+![SB-H20 to BSS138 to M5Stack Atom Lite wiring diagram](wiring/atom-wiring.png)
+
+> Open `wiring/atom-wiring.html` for the same diagram interactively.
+
 ## Why ESP32 makes sense here
 
 The SB-H20 button protocol is timing-critical (pull DATA low for ~2 µs after the
