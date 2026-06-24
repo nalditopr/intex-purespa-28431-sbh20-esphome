@@ -18,6 +18,8 @@ and the mainboard — no replacement board, no soldering on the spa itself.
 
 > Open `wiring/sbh20-wiring.html` in a browser for the interactive as-built diagram.
 
+![As-built: D1 mini + BSS138 on a proto shield, spa cable into the screw terminal](photos/build-d1mini-bss138.jpg)
+
 ---
 
 ## Why ESP8266 and not ESP32 / Pico
