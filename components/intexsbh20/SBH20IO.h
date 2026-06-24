@@ -32,7 +32,11 @@
  *      This is the key advantage over the ESP8266: WiFi can no longer preempt
  *      the receive/transmit timing.
  *
- * Keep ISRs in IRAM (IRAM_ATTR) and avoid heavy work / logging inside them.
+ * NOTE: these ISRs run from flash, NOT IRAM. The Arduino GPIO ISR is registered
+ * without the IRAM flag, so ESP-IDF masks it during flash writes (the ISR cannot
+ * fire while the cache is disabled) - IRAM buys nothing here. Forcing the large,
+ * literal-heavy decode functions into IRAM instead causes Xtensa 'l32r: literal
+ * placed after use' relocation errors at link time. Keep ISR work light.
  * =========================================================================
  */
 
@@ -161,18 +165,18 @@ private:
 
 private:
   // ISR and ISR helper
-  static void IRAM_ATTR latchFallingISR(void *arg);
-  static void IRAM_ATTR clockRisingISR(void *arg);
-  static inline uint8_t IRAM_ATTR BCD(uint16_t value);
-  static inline void IRAM_ATTR decodeDisplay(uint16_t frame);
-  static inline void IRAM_ATTR decodeLED(uint16_t frame);
-  static inline void IRAM_ATTR decodeButton(uint16_t frame);
+  static void latchFallingISR(void *arg);
+  static void clockRisingISR(void *arg);
+  static inline uint8_t BCD(uint16_t value);
+  static inline void decodeDisplay(uint16_t frame);
+  static inline void decodeLED(uint16_t frame);
+  static inline void decodeButton(uint16_t frame);
 
   // ESP32 fast GPIO helpers (pins < 32)
-  static inline bool IRAM_ATTR readData();
-  static inline bool IRAM_ATTR readLatch();
-  static inline void IRAM_ATTR driveDataLow();
-  static inline void IRAM_ATTR releaseData();
+  static inline bool readData();
+  static inline bool readLatch();
+  static inline void driveDataLow();
+  static inline void releaseData();
 
 private:
   // ISR variables

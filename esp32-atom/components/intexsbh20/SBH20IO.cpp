@@ -190,14 +190,14 @@ volatile uint32_t SBH20IO::maskData = 0;
 volatile uint32_t SBH20IO::maskLatch = 0;
 
 // ESP32 fast GPIO helpers (require GPIO < 32)
-inline bool IRAM_ATTR SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
-inline bool IRAM_ATTR SBH20IO::readLatch() { return (REG_READ(GPIO_IN_REG) & maskLatch) != 0; }
-inline void IRAM_ATTR SBH20IO::driveDataLow()
+inline bool SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
+inline bool SBH20IO::readLatch() { return (REG_READ(GPIO_IN_REG) & maskLatch) != 0; }
+inline void SBH20IO::driveDataLow()
 {
   REG_WRITE(GPIO_OUT_W1TC_REG, maskData);    // ensure output latch is 0
   REG_WRITE(GPIO_ENABLE_W1TS_REG, maskData); // enable driver -> pulls line low
 }
-inline void IRAM_ATTR SBH20IO::releaseData()
+inline void SBH20IO::releaseData()
 {
   REG_WRITE(GPIO_ENABLE_W1TC_REG, maskData); // disable driver -> input, pull-up high
 }
@@ -563,13 +563,13 @@ uint16_t SBH20IO::convertDisplayToCelsius(uint16_t value) const
   return (celsiusValue >= 0) && (celsiusValue <= 60) ? celsiusValue : UNDEF::USHORT;
 }
 
-void IRAM_ATTR SBH20IO::latchFallingISR(void *arg)
+void SBH20IO::latchFallingISR(void *arg)
 {
   // release DATA after a button reply (was driven low in decodeButton)
   releaseData();
 }
 
-void IRAM_ATTR SBH20IO::clockRisingISR(void *arg)
+void SBH20IO::clockRisingISR(void *arg)
 {
   static uint16_t frame = 0x0000;
   static uint16_t receivedBits = 0x0000;
@@ -616,7 +616,7 @@ void IRAM_ATTR SBH20IO::clockRisingISR(void *arg)
   }
 }
 
-inline uint8_t IRAM_ATTR SBH20IO::BCD(uint16_t value)
+inline uint8_t SBH20IO::BCD(uint16_t value)
 {
   uint8_t digit;
   switch (value & FRAME_DIGIT::SEGMENTS)
@@ -674,7 +674,7 @@ inline uint8_t IRAM_ATTR SBH20IO::BCD(uint16_t value)
   return digit;
 }
 
-inline void IRAM_ATTR SBH20IO::decodeDisplay(uint16_t frame)
+inline void SBH20IO::decodeDisplay(uint16_t frame)
 {
   static uint16_t value = 0;  // current display
   static uint16_t pValue = 0; // previous display
@@ -748,7 +748,7 @@ inline void IRAM_ATTR SBH20IO::decodeDisplay(uint16_t frame)
   }
 }
 
-inline void IRAM_ATTR SBH20IO::decodeLED(uint16_t frame)
+inline void SBH20IO::decodeLED(uint16_t frame)
 {
   static uint16_t pFrame = 0x000;
   static int count = 0;
@@ -786,7 +786,7 @@ inline void IRAM_ATTR SBH20IO::decodeLED(uint16_t frame)
   }
 }
 
-inline void IRAM_ATTR SBH20IO::decodeButton(uint16_t frame)
+inline void SBH20IO::decodeButton(uint16_t frame)
 {
   bool reply = false;
   if (frame & FRAME_BUTTON::FILTER)
