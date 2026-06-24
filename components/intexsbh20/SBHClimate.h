@@ -13,6 +13,9 @@ public:
 protected:
 	virtual void control(const esphome::climate::ClimateCall &call) override;
 	virtual esphome::climate::ClimateTraits traits() override;
+private:
+	uint32_t last_target_read_ms_ = 0;
+	static const uint32_t TARGET_READ_BACKOFF_MS = 30000; // ms between setpoint-read attempts
 };
 
 }}

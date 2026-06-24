@@ -31,10 +31,21 @@ void SBHClimate::update()
 
 	this->target_temperature = (targetTemp != SBH20IO::UNDEF::USHORT) ? targetTemp : SBH20IO::WATER_TEMP::SET_MIN;
 
-	if (targetTemp == SBH20IO::UNDEF::USHORT)
+	// The panel only shows the setpoint briefly after a button press, so to learn
+	// the target temperature we nudge it with one "down" press (which reveals the
+	// setpoint without changing it). Only attempt this when the spa is online,
+	// powered and error-free, and back off between tries so we don't spam the bus
+	// or the log while idle/disconnected.
+	if (targetTemp == SBH20IO::UNDEF::USHORT &&
+	    sbh->isOnline() && sbh->isPowerOn() == true && sbh->getErrorValue() == 0)
 	{
-		ESP_LOGD("SBHClimate", "Target temp is undef, pressing the down button...");
-		sbh->forceReadTargetTemperature(); // we'll learn the real target temp in near future...
+		uint32_t now = millis();
+		if (last_target_read_ms_ == 0 || (now - last_target_read_ms_) >= TARGET_READ_BACKOFF_MS)
+		{
+			last_target_read_ms_ = now;
+			ESP_LOGD("SBHClimate", "Target temp unknown; reading setpoint via a down press...");
+			sbh->forceReadTargetTemperature();
+		}
 	}
 
 	publish_state();
