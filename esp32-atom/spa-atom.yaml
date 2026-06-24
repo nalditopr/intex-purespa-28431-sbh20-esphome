@@ -31,6 +31,11 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  # ESP32 draws ~2x the ESP8266 and spikes harder on WiFi TX. Lowering TX power
+  # and enabling light power-save keeps current spikes within what the spa 5V
+  # tap + a small (10 uF) bulk cap can handle. Raise output_power if range suffers.
+  output_power: 12dB
+  power_save_mode: light
   ap:
     ssid: "${name} setup"
 

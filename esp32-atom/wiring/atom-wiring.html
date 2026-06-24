@@ -119,6 +119,13 @@
       <path class="wire" style="stroke:var(--c-clk)" d="M616,370 C650,370 666,380 700,380"/>
 
       <text class="sub" x="598" y="404" text-anchor="middle">* optional on ESP32</text>
+
+      <!-- 10 µF bulk cap across Atom 5V / GND (smooths WiFi TX spikes) -->
+      <path class="wire" style="stroke:var(--c-5v)"  d="M700,120 H674 V157"/>
+      <path class="wire" style="stroke:var(--c-gnd)" d="M700,205 H674 V169"/>
+      <line x1="662" y1="157" x2="686" y2="157" stroke="#e6edf3" stroke-width="2.6"/>
+      <line x1="662" y1="169" x2="686" y2="169" stroke="#e6edf3" stroke-width="2.6"/>
+      <text class="sub" x="658" y="167" text-anchor="end">10µF</text>
     </svg>
   </div>
 
@@ -144,6 +151,9 @@
         <li><b>470 Ω optional</b> — G19/22/23 aren't strap pins, no boot back-power issue.</li>
         <li>ISRs pinned to <b>core 1</b>; WiFi on core 0 → no preemption.</li>
         <li>YAML: <span class="chip">framework: arduino</span> required.</li>
+        <li><b>10 µF</b> across Atom 5V/GND; ESP32 draws ~2× the '8266, so YAML sets
+          <span class="chip">output_power: 12dB</span> + <span class="chip">power_save_mode: light</span> to tame TX spikes.</li>
+        <li>Fuse the 5V tap at <b>~500 mA–1 A slow-blow</b>.</li>
       </ul>
     </div>
 
