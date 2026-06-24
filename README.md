@@ -45,6 +45,21 @@ offloads timing to PIO. For an SB-H20, a **$4 D1 mini is the path of least resis
 
 Total ≈ $8–15.
 
+### Parts used on this build (tested)
+
+These are the exact multi-packs used for the unit pictured above (links are not
+affiliate links — substitute equivalents freely):
+
+| Part | Product |
+|------|---------|
+| D1 mini (ESP8266, ESP-12F) — 5 pk | Hosyond D1 Mini NodeMcu — https://www.amazon.com/dp/B09SPYY61L |
+| BSS138 4-ch level shifter — 10 pk | HiLetgo 4-Channel I2C Bi-Directional — https://www.amazon.com/dp/B07F7W91LC |
+| Solderable proto board — 6 pk | ElectroCookie Mini PCB Prototype Board — https://www.amazon.com/dp/B081MSKJJX |
+| IP68 outdoor enclosure | MAKERELE Small External Junction Box — https://www.amazon.com/dp/B0D3GR7CWB |
+
+Still need separately: a small screw-terminal block (used here to land the spa cable),
+3 × 470 Ω resistors, hookup wire, and a way to tap the panel ribbon.
+
 ---
 
 ## Wiring (as-built)
