@@ -1,0 +1,15 @@
+# secrets - never commit real credentials
+secrets.yaml
+esphome/secrets.yaml
+
+# esphome build artifacts
+.esphome/
+*.bin
+
+# local log captures
+esp_log.txt
+*.log
+
+# python
+__pycache__/
+*.pyc

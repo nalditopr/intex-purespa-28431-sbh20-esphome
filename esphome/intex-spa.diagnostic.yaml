@@ -1,0 +1,68 @@
+# DIAGNOSTIC firmware - temporary.
+# Turns the three spa GPIOs into frequency counters so you can identify the
+# signals while sorting the wiring. CLK has the highest edge rate.
+# Connect to the spa and power from spa 5V (the lines are dead otherwise),
+# read the [hz] log lines, then flash intex-spa.yaml for normal operation.
+substitutions:
+  name: intex-spa
+  friendly_name: "Intex PureSpa DIAG"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.f_cpu: 160000000L
+
+esp8266:
+  board: d1_mini
+
+logger:
+  level: INFO
+api:
+  encryption:
+    key: !secret api_key
+ota:
+  - platform: esphome
+    password: !secret ota_password
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${name} setup"
+captive_portal:
+
+sensor:
+  - platform: pulse_counter
+    pin: GPIO14            # D5
+    name: "D5 GPIO14 freq"
+    id: freq_d5
+    update_interval: 2s
+    internal_filter: 1us
+    count_mode: { rising_edge: INCREMENT, falling_edge: DISABLE }
+    unit_of_measurement: "Hz"
+    filters: [ { multiply: 0.01667 } ]
+  - platform: pulse_counter
+    pin: GPIO12            # D6
+    name: "D6 GPIO12 freq"
+    id: freq_d6
+    update_interval: 2s
+    internal_filter: 1us
+    count_mode: { rising_edge: INCREMENT, falling_edge: DISABLE }
+    unit_of_measurement: "Hz"
+    filters: [ { multiply: 0.01667 } ]
+  - platform: pulse_counter
+    pin: GPIO13            # D7
+    name: "D7 GPIO13 freq"
+    id: freq_d7
+    update_interval: 2s
+    internal_filter: 1us
+    count_mode: { rising_edge: INCREMENT, falling_edge: DISABLE }
+    unit_of_measurement: "Hz"
+    filters: [ { multiply: 0.01667 } ]
+
+interval:
+  - interval: 2s
+    then:
+      - lambda: |-
+          ESP_LOGW("hz", "D5=%.0f Hz   D6=%.0f Hz   D7=%.0f Hz",
+                   id(freq_d5).state, id(freq_d6).state, id(freq_d7).state);

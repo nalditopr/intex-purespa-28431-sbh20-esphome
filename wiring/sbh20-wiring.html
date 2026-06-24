@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Intex SB-H20 → D1 mini — AS-BUILT (real board pin order)</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --ink:#e6edf3; --muted:#8b949e;
+    --accent:#3fb950; --line:#30363d;
+    --c-5v:#ff4d4d; --c-gnd:#8b949e; --c-clk:#ffffff; --c-data:#ffcf3f; --c-latch:#bc8cff; --c-3v3:#ff9d4d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  header{padding:22px 26px;border-bottom:1px solid var(--line)}
+  h1{margin:0 0 4px;font-size:20px}
+  header p{margin:0;color:var(--muted);font-size:13px}
+  .badge{display:inline-block;background:#16331f;color:var(--accent);border:1px solid #2ea04366;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600;margin-left:8px}
+  .wrap{display:flex;flex-wrap:wrap;gap:24px;padding:24px 26px;align-items:flex-start}
+  .diagram{flex:1 1 700px;min-width:360px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+  svg{width:100%;height:auto;display:block}
+  .side{flex:1 1 300px;min-width:280px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:18px}
+  .card h2{margin:0 0 10px;font-size:15px;color:var(--accent);letter-spacing:.3px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600}
+  .sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;border:1px solid #0006}
+  .note{font-size:12.5px;color:var(--muted)} .note b{color:var(--ink)}
+  ul{margin:8px 0 0;padding-left:18px} li{margin:4px 0}
+  .chip{display:inline-block;background:#21262d;border:1px solid var(--line);border-radius:6px;padding:1px 7px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .lbl{font:600 13px system-ui;fill:var(--ink)}
+  .sub{font:11px ui-monospace,Consolas,monospace;fill:var(--muted)}
+  .pin{font:11px ui-monospace,Consolas,monospace;fill:var(--ink)}
+  .box{fill:#1b2230;stroke:#3a4658;stroke-width:1.5}
+  .bss{fill:#241a2e;stroke:#7d5ba6;stroke-width:1.6}
+  .wire{stroke-width:3;fill:none;stroke-linecap:round}
+  .pad{fill:#0e1116;stroke:#586375;stroke-width:1.3}
+  .res{fill:#2a2f1a;stroke:#d9c64a;stroke-width:1.5}
+  .unused{fill:#0e1116;stroke:#3a3f47;stroke-width:1.2}
+</style>
+</head>
+<body>
+<header>
+  <h1>SB-H20 → BSS138 → D1 mini<span class="badge">AS-BUILT · real board pin order</span></h1>
+  <p>HV header top→bottom: HV4 · HV3 · GND · HV · HV2 · HV1 &nbsp;|&nbsp; 470 Ω series on each signal · 160 MHz</p>
+</header>
+
+<div class="wrap">
+  <div class="diagram">
+    <svg viewBox="0 0 880 470" role="img" aria-label="As-built wiring diagram, real pin order">
+      <!-- component boxes -->
+      <rect class="box" x="24" y="70" width="150" height="356" rx="8"/>
+      <text class="lbl" x="99" y="92" text-anchor="middle">SB-H20 cable</text>
+
+      <rect class="bss" x="372" y="60" width="150" height="376" rx="8"/>
+      <text class="lbl" x="447" y="50" text-anchor="middle">BSS138 (your pin order)</text>
+      <text class="sub" x="408" y="448" text-anchor="middle">HV side</text>
+      <text class="sub" x="487" y="448" text-anchor="middle">LV side</text>
+
+      <rect class="box" x="700" y="70" width="156" height="356" rx="8"/>
+      <text class="lbl" x="778" y="92" text-anchor="middle">D1 mini</text>
+
+      <!-- ===== BSS138 pins in REAL order, top->bottom: HV4,HV3,GND,HV,HV2,HV1 ===== -->
+      <!-- y: 95,150,205,260,315,370 -->
+      <!-- HV column x=372 ; LV column x=522 -->
+      <!-- row HV4 (unused) -->
+      <circle class="unused" cx="372" cy="95" r="5"/><text class="pin" x="384" y="91">HV4</text>
+      <circle class="unused" cx="522" cy="95" r="5"/><text class="pin" x="510" y="91" text-anchor="end">LV4</text>
+      <text class="sub" x="447" y="91" text-anchor="middle">unused</text>
+      <!-- row HV3 = LATCH (black) -->
+      <circle class="pad" cx="372" cy="150" r="5"/><text class="pin" x="384" y="146">HV3</text>
+      <circle class="pad" cx="522" cy="150" r="5"/><text class="pin" x="510" y="146" text-anchor="end">LV3</text>
+      <!-- row GND -->
+      <circle class="pad" cx="372" cy="205" r="5"/><text class="pin" x="384" y="201">GND</text>
+      <circle class="pad" cx="522" cy="205" r="5"/><text class="pin" x="510" y="201" text-anchor="end">GND</text>
+      <!-- row HV = 5V -->
+      <circle class="pad" cx="372" cy="260" r="5"/><text class="pin" x="384" y="256">HV</text>
+      <circle class="pad" cx="522" cy="260" r="5"/><text class="pin" x="510" y="256" text-anchor="end">LV</text>
+      <!-- row HV2 = DATA (yellow) -->
+      <circle class="pad" cx="372" cy="315" r="5"/><text class="pin" x="384" y="311">HV2</text>
+      <circle class="pad" cx="522" cy="315" r="5"/><text class="pin" x="510" y="311" text-anchor="end">LV2</text>
+      <!-- row HV1 = CLK (white) -->
+      <circle class="pad" cx="372" cy="370" r="5"/><text class="pin" x="384" y="366">HV1</text>
+      <circle class="pad" cx="522" cy="370" r="5"/><text class="pin" x="510" y="366" text-anchor="end">LV1</text>
+
+      <!-- channel hint lines -->
+      <path d="M372,150 H522" stroke="#3a4658" stroke-dasharray="3 3" fill="none"/>
+      <path d="M372,315 H522" stroke="#3a4658" stroke-dasharray="3 3" fill="none"/>
+      <path d="M372,370 H522" stroke="#3a4658" stroke-dasharray="3 3" fill="none"/>
+
+      <!-- ===== SPA pads (left), grouped by signal ===== -->
+      <circle class="pad" cx="174" cy="150" r="5"/><text class="pin" x="164" y="146" text-anchor="end">black LATCH</text>
+      <circle class="pad" cx="174" cy="205" r="5"/><text class="pin" x="164" y="201" text-anchor="end">green GND</text>
+      <circle class="pad" cx="174" cy="260" r="5"/><text class="pin" x="164" y="256" text-anchor="end">red 5V</text>
+      <circle class="pad" cx="174" cy="315" r="5"/><text class="pin" x="164" y="311" text-anchor="end">yellow DATA</text>
+      <circle class="pad" cx="174" cy="370" r="5"/><text class="pin" x="164" y="366" text-anchor="end">white CLK</text>
+
+      <!-- spa -> HV (straight, since spa pads aligned to HV rows) -->
+      <path class="wire" style="stroke:var(--c-latch)" d="M174,150 H372"/>
+      <path class="wire" style="stroke:var(--c-gnd)"   d="M174,205 H372"/>
+      <path class="wire" style="stroke:var(--c-5v)"    d="M174,260 H372"/>
+      <path class="wire" style="stroke:var(--c-data)"  d="M174,315 H372"/>
+      <path class="wire" style="stroke:var(--c-clk)"   d="M174,370 H372"/>
+
+      <!-- ===== D1 mini pads (right) ===== -->
+      <circle class="pad" cx="700" cy="120" r="5"/><text class="pin" x="712" y="116">5V</text>
+      <circle class="pad" cx="700" cy="150" r="5"/><text class="pin" x="712" y="146">3V3</text>
+      <circle class="pad" cx="700" cy="205" r="5"/><text class="pin" x="712" y="201">G (GND)</text>
+      <circle class="pad" cx="700" cy="150" r="5"/>
+      <circle class="pad" cx="700" cy="280" r="5"/><text class="pin" x="712" y="276">D7 · GPIO13</text>
+      <circle class="pad" cx="700" cy="330" r="5"/><text class="pin" x="712" y="326">D6 · GPIO12</text>
+      <circle class="pad" cx="700" cy="380" r="5"/><text class="pin" x="712" y="376">D5 · GPIO14</text>
+
+      <!-- LV -> D1 power/ref -->
+      <!-- HV(5V) also to D1 5V: from spa red over top -->
+      <path class="wire" style="stroke:var(--c-5v)" d="M174,260 C210,260 215,40 440,40 C650,40 660,120 700,120"/>
+      <!-- LV(3V3) <- D1 3V3 -->
+      <path class="wire" style="stroke:var(--c-3v3)" d="M522,260 C580,260 640,150 700,150"/>
+      <!-- GND LV -> D1 G -->
+      <path class="wire" style="stroke:var(--c-gnd)" d="M522,205 H700"/>
+
+      <!-- LV signals through 470ohm to D1 (LV3->D7, LV2->D6, LV1->D5) -->
+      <!-- LATCH: LV3(150) -> R -> D7(280) -->
+      <path class="wire" style="stroke:var(--c-latch)" d="M522,150 H580"/>
+      <rect class="res" x="580" y="142" width="36" height="16" rx="3"/><text class="sub" x="598" y="137" text-anchor="middle">470Ω</text>
+      <path class="wire" style="stroke:var(--c-latch)" d="M616,150 C650,150 666,280 700,280"/>
+      <!-- DATA: LV2(315) -> R -> D6(330) -->
+      <path class="wire" style="stroke:var(--c-data)" d="M522,315 H580"/>
+      <rect class="res" x="580" y="307" width="36" height="16" rx="3"/><text class="sub" x="598" y="302" text-anchor="middle">470Ω</text>
+      <path class="wire" style="stroke:var(--c-data)" d="M616,315 C650,315 666,330 700,330"/>
+      <!-- CLK: LV1(370) -> R -> D5(380) -->
+      <path class="wire" style="stroke:var(--c-clk)" d="M522,370 H580"/>
+      <rect class="res" x="580" y="362" width="36" height="16" rx="3"/><text class="sub" x="598" y="357" text-anchor="middle">470Ω</text>
+      <path class="wire" style="stroke:var(--c-clk)" d="M616,370 C650,370 666,380 700,380"/>
+    </svg>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h2>BSS138 header — your physical order</h2>
+      <table>
+        <tr><th>Pos (top→bottom)</th><th>HV pin</th><th>Connects to</th></tr>
+        <tr><td>1</td><td>HV4</td><td>— (unused)</td></tr>
+        <tr><td>2</td><td>HV3</td><td><span class="sw" style="background:var(--c-latch)"></span>black · LATCH</td></tr>
+        <tr><td>3</td><td>GND</td><td><span class="sw" style="background:var(--c-gnd)"></span>green · GND</td></tr>
+        <tr><td>4</td><td>HV</td><td><span class="sw" style="background:var(--c-5v)"></span>red · 5V</td></tr>
+        <tr><td>5</td><td>HV2</td><td><span class="sw" style="background:var(--c-data)"></span>yellow · DATA</td></tr>
+        <tr><td>6</td><td>HV1</td><td><span class="sw" style="background:var(--c-clk)"></span>white · CLK</td></tr>
+      </table>
+      <p class="note" style="margin-top:10px">LV side mirrors it (LV4 · LV3 · GND · LV · LV2 · LV1). LV ref = D1 <b>3V3</b>.</p>
+    </div>
+
+    <div class="card">
+      <h2>LV → D1 mini (with 470 Ω)</h2>
+      <table>
+        <tr><th>LV pin</th><th>Series R</th><th>D1 mini</th><th>Signal</th></tr>
+        <tr><td>LV1</td><td>470Ω</td><td>D5 / GPIO14</td><td>CLK</td></tr>
+        <tr><td>LV2</td><td>470Ω</td><td>D6 / GPIO12</td><td>DATA</td></tr>
+        <tr><td>LV3</td><td>470Ω</td><td>D7 / GPIO13</td><td>LATCH</td></tr>
+        <tr><td>LV</td><td>—</td><td>3V3</td><td>ref</td></tr>
+        <tr><td>GND</td><td>—</td><td>G</td><td>ground</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Power</h2>
+      <ul>
+        <li><b>red 5V</b> → HV (pos 4) <i>and</i> D1 mini 5V pin</li>
+        <li><b>D1 3V3</b> → LV ref</li>
+        <li><b>green</b> → GND (pos 3) + D1 G — all common</li>
+        <li>Spa power only — no USB simultaneously</li>
+      </ul>
+    </div>
+  </div>
+</div>
+</body>
+</html>
