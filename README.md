@@ -3,14 +3,12 @@
 WiFi + Home Assistant control for the **Intex PureSpa** with the **SB-H20** control
 panel (the older, non-WiFi pump) using a **Wemos D1 mini (ESP8266)**, a **BSS138
 level shifter**, and the
+[`piitaya/esphome-intexsbh20`](https://github.com/piitaya/esphome-intexsbh20)
+external component.
 
 > **Tested on:** Intex **28431E PureSpa Plus** (SB-H20 panel). The SB-H20 plug/pinout
 > is shared with the SSP and SJB models, so this should also apply to SimpleSpa SB-B20,
 > SSP-H-20-1, and SJB-HS.
-
-Built with
-[`piitaya/esphome-intexsbh20`](https://github.com/piitaya/esphome-intexsbh20)
-external component.
 
 This repo is a build log + known-good wiring for that combination, including the
 gotchas that took a while to find. It taps the ribbon between the control panel
