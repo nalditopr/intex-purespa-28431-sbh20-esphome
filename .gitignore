@@ -13,3 +13,8 @@ esp_log.txt
 # python
 __pycache__/
 *.pyc
+
+# esp32 build + local test artifacts
+esp32-atom/.esphome/
+esp32-atom/test/*.exe
+
