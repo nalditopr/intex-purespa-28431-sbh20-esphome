@@ -14,6 +14,24 @@ panel — the upstream components are ESP8266 (`piitaya`) or RP2040/Pico W
 
 > Open `wiring/atom-wiring.html` for the same diagram interactively.
 
+## Build validation status
+
+| Check | Result |
+|-------|--------|
+| Host unit tests (`test/test_decode.cpp`, decode math) | ✅ 41/41 pass (g++) |
+| `esphome config` (schema / pins / codegen) | ✅ valid |
+| Compile all component sources on the ESP32 toolchain | ✅ **zero errors** — `SBH20IO.cpp`, `SBHClimate.cpp`, `intexsbh20.cpp` all build clean against the real ESP32 SDK (register macros, FreeRTOS, Arduino HAL, ESPHome APIs all resolve) |
+| Produce a flashable `firmware.bin` | ⏳ not yet — pending a build on a clean toolchain install (see notes) |
+
+**Build it on your Home Assistant / ESPHome box**, where the platform installs
+cleanly. Two Windows-only gotchas if you build there:
+- An **accented character in the user path** (e.g. `C:\Users\José\…`) breaks the
+  xtensa linker (it truncates the path). Build from an ASCII path and set
+  `PLATFORMIO_CORE_DIR` to an ASCII location (or the 8.3 short name).
+- A flaky package mirror during first install can leave `framework-arduinoespressif32-libs`
+  as an empty stub (missing the WiFi/PHY blobs → `cannot find -lcore/-lphy/...`).
+  Re-run the platform install if you see that.
+
 ## Why ESP32 makes sense here
 
 The SB-H20 button protocol is timing-critical (pull DATA low for ~2 µs after the
