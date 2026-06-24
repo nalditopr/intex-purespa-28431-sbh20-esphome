@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ElectroCookie Mini layout — Atom Lite + BSS138</title>
+<style>
+  body{margin:0;background:#0e1116;color:#e6edf3;font:14px system-ui,Segoe UI,sans-serif}
+  h1{font-size:18px;margin:18px 20px 2px} p.sub{margin:0 20px 12px;color:#8b949e;font-size:12px}
+  .wrap{display:flex;flex-wrap:wrap;gap:20px;padding:12px 20px}
+  canvas{background:#0d1117;border:1px solid #30363d;border-radius:10px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px 16px;max-width:430px}
+  .card h2{margin:0 0 8px;font-size:14px;color:#3fb950}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th,td{border-bottom:1px solid #30363d;padding:4px 7px;text-align:left}
+  th{color:#8b949e}
+  code{background:#21262d;padding:1px 5px;border-radius:4px;font-size:12px}
+  ul{margin:6px 0 0;padding-left:18px} li{margin:3px 0;font-size:12.5px}
+  .sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid #0006}
+</style>
+</head>
+<body>
+<h1>ElectroCookie Mini — Atom Lite (ESP32) + BSS138</h1>
+<p class="sub">17 rows × cols A–E | F–J + power rails. BSS138 straddles the center gap (HV in A–E half, LV in F–J half). Spa wires &amp; Atom pigtail land on the SAME rows as the BSS138 pins, so the row ties make most connections — only 4 jumpers + the cap.</p>
+<div class="wrap">
+  <canvas id="bb" width="620" height="560"></canvas>
+  <div class="card">
+    <h2>Row map (rows 7–12 active)</h2>
+    <table>
+      <tr><th>Row</th><th>A–E half (HV)</th><th>F–J half (LV)</th></tr>
+      <tr><td>7</td><td>HV4 — unused</td><td>LV4 — unused</td></tr>
+      <tr><td>8</td><td><span class="sw" style="background:#bc8cff"></span>HV3 ← black (LATCH)</td><td>LV3 → Atom <code>G23</code></td></tr>
+      <tr><td>9</td><td><span class="sw" style="background:#8b949e"></span>GND ← green</td><td>GND → (−) rail</td></tr>
+      <tr><td>10</td><td><span class="sw" style="background:#ff4d4d"></span>HV ← red (5V)</td><td>LV → Atom <code>3V3</code></td></tr>
+      <tr><td>11</td><td><span class="sw" style="background:#ffcf3f"></span>HV2 ← yellow (DATA)</td><td>LV2 → Atom <code>G19</code></td></tr>
+      <tr><td>12</td><td><span class="sw" style="background:#ffffff"></span>HV1 ← white (CLK)</td><td>LV1 → Atom <code>G22</code></td></tr>
+    </table>
+    <h2 style="margin-top:12px">Jumpers &amp; parts</h2>
+    <ul>
+      <li><span class="sw" style="background:#ff4d4d"></span><b>A10 → (+) rail</b> — 5V from red feeds the rail</li>
+      <li><span class="sw" style="background:#8b949e"></span><b>A9 → (−) rail</b> — GND from green feeds the rail</li>
+      <li><span class="sw" style="background:#8b949e"></span><b>F9 → (−) rail</b> — BSS138 LV-side GND</li>
+      <li>2× <b>rail bridges</b> (L↔R + and −) if rails aren't full-length</li>
+      <li><b>Atom 5V → (+) rail, Atom GND → (−) rail</b></li>
+      <li><b>10 µF</b> across (+)/(−) near the Atom tap</li>
+      <li>470 Ω optional, inline on the 3 LV→Atom wires</li>
+    </ul>
+  </div>
+</div>
+<script>
+const c = document.getElementById('bb'), x = c.getContext('2d');
+const P = 26, COL = {}, ROWY = r => 70 + (r-1)*P;
+// column x positions
+const cols = [['L-',46],['L+',74],['A',124],['B',150],['C',176],['D',202],['E',228],
+              ['F',286],['G',312],['H',338],['I',364],['J',390],['R+',440],['R-',468]];
+cols.forEach(([n,xx])=>COL[n]=xx);
+function hole(cx,cy,fill){ x.beginPath(); x.arc(cx,cy,3.4,0,7); x.fillStyle=fill||'#0e1116'; x.fill(); x.lineWidth=1.1; x.strokeStyle='#586375'; x.stroke(); }
+x.font='10px Consolas, monospace';
+
+// rails (full-length strips)
+function rail(cx,color){ x.fillStyle=color; x.globalAlpha=0.12; x.fillRect(cx-9,58,18,ROWY(17)-58+12); x.globalAlpha=1; for(let r=1;r<=17;r++) hole(cx,ROWY(r)); }
+rail(COL['L-'],'#8b949e'); rail(COL['L+'],'#ff4d4d');
+rail(COL['R+'],'#ff4d4d'); rail(COL['R-'],'#8b949e');
+x.fillStyle='#8b949e'; x.textAlign='center';
+x.fillText('−',COL['L-'],50); x.fillText('+',COL['L+'],50); x.fillText('+',COL['R+'],50); x.fillText('−',COL['R-'],50);
+
+// main grid holes A-J, rows 1-17
+['A','B','C','D','E','F','G','H','I','J'].forEach(n=>{
+  x.fillStyle='#8b949e'; x.fillText(n,COL[n],50);
+  for(let r=1;r<=17;r++) hole(COL[n],ROWY(r));
+});
+// row numbers
+x.textAlign='right'; x.fillStyle='#8b949e';
+for(let r=1;r<=17;r++) x.fillText(r,COL['A']-16,ROWY(r)+3);
+// center gap label
+x.save(); x.translate((COL['E']+COL['F'])/2, ROWY(15)); x.fillStyle='#3a4658'; x.textAlign='center'; x.fillText('center gap', 0, 0); x.restore();
+
+// helper to draw a wire
+function wire(x1,y1,x2,y2,color,w){ x.beginPath(); x.moveTo(x1,y1); x.lineTo(x2,y2); x.strokeStyle=color; x.lineWidth=w||3; x.lineCap='round'; x.stroke(); }
+
+// ---- BSS138 body straddling center gap, rows 7-12 ----
+x.fillStyle='#241a2e'; x.strokeStyle='#7d5ba6'; x.lineWidth=1.6;
+x.beginPath(); x.roundRect(COL['E']-8, ROWY(7)-10, COL['F']-COL['E']+16, ROWY(12)-ROWY(7)+20, 7); x.fill(); x.stroke();
+x.fillStyle='#cbb6e6'; x.textAlign='center'; x.font='bold 10px system-ui';
+x.fillText('BSS138', (COL['E']+COL['F'])/2, ROWY(7)-14);
+x.font='9px Consolas, monospace'; x.fillStyle='#e6edf3';
+const hv=['HV4','HV3','GND','HV','HV2','HV1'], lv=['LV4','LV3','GND','LV','LV2','LV1'];
+for(let i=0;i<6;i++){ const r=7+i; hole(COL['E'],ROWY(r),'#1b2230'); hole(COL['F'],ROWY(r),'#1b2230');
+  x.textAlign='right'; x.fillText(hv[i],COL['E']-6,ROWY(r)+3);
+  x.textAlign='left'; x.fillText(lv[i],COL['F']+6,ROWY(r)+3); }
+
+// ---- spa screw terminal + wires (left), rows 8-12 col A ----
+x.fillStyle='#16331f'; x.strokeStyle='#2ea043'; x.lineWidth=1.4;
+x.beginPath(); x.roundRect(8, ROWY(8)-9, 30, ROWY(12)-ROWY(8)+18, 5); x.fill(); x.stroke();
+const spa=[[8,'#bc8cff','black'],[9,'#8b949e','green'],[10,'#ff4d4d','red'],[11,'#ffcf3f','yellow'],[12,'#ffffff','white']];
+spa.forEach(([r,col,lbl])=>{ wire(38,ROWY(r),COL['A'],ROWY(r),col,3); x.fillStyle=col; x.textAlign='center'; x.font='8px system-ui'; });
+x.save(); x.translate(22,ROWY(10)); x.rotate(-Math.PI/2); x.fillStyle='#8ad0a0'; x.textAlign='center'; x.font='9px system-ui'; x.fillText('SPA cable',0,3); x.restore();
+
+// ---- Atom Lite box + pigtail (right) ----
+x.fillStyle='#10231a'; x.strokeStyle='#2ea043'; x.lineWidth=1.6;
+x.beginPath(); x.roundRect(520, ROWY(7)-6, 90, ROWY(13)-ROWY(7)+12, 8); x.fill(); x.stroke();
+x.fillStyle='#9fe0b5'; x.textAlign='center'; x.font='bold 11px system-ui'; x.fillText('Atom Lite',565,ROWY(7)+8);
+x.font='9px Consolas,monospace'; x.textAlign='left'; x.fillStyle='#e6edf3';
+const atom=[[8,'#bc8cff','G23'],[10,'#ff9d4d','3V3'],[11,'#ffcf3f','G19'],[12,'#ffffff','G22']];
+atom.forEach(([r,col,lbl])=>{ wire(COL['J'],ROWY(r),520,ROWY(r),col,3); x.fillStyle=col; x.fillText(lbl,524,ROWY(r)+3); });
+// atom power taps
+wire(COL['R+'],ROWY(14),520,ROWY(14),'#ff4d4d',3); x.fillStyle='#ff4d4d'; x.fillText('5V',524,ROWY(14)+3);
+wire(COL['R-'],ROWY(15),520,ROWY(15),'#8b949e',3); x.fillStyle='#8b949e'; x.fillText('GND',524,ROWY(15)+3);
+
+// ---- jumpers ----
+wire(COL['A'],ROWY(10),COL['L+'],ROWY(10),'#ff4d4d',3);   // A10 -> +rail (5V)
+wire(COL['A'],ROWY(9),COL['L-'],ROWY(9),'#8b949e',3);     // A9 -> -rail (GND)
+wire(COL['F'],ROWY(9),COL['R-'],ROWY(9),'#8b949e',3);     // F9 LV GND -> -rail
+// rail bridges (row 2)
+wire(COL['L+'],ROWY(2),COL['R+'],ROWY(2),'#ff4d4d',2.2);
+wire(COL['L-'],ROWY(1),COL['R-'],ROWY(1),'#8b949e',2.2);
+// 10uF cap across rails near atom
+x.strokeStyle='#e6edf3'; x.lineWidth=2.4;
+x.beginPath(); x.moveTo(COL['R+'],ROWY(16)); x.lineTo(COL['R+'],ROWY(16)+7); x.stroke();
+x.beginPath(); x.moveTo(COL['R+']-8,ROWY(16)+7); x.lineTo(COL['R+']+8,ROWY(16)+7); x.stroke();
+x.beginPath(); x.moveTo(COL['R+']-8,ROWY(16)+12); x.lineTo(COL['R+']+8,ROWY(16)+12); x.stroke();
+x.beginPath(); x.moveTo(COL['R+'],ROWY(16)+12); x.lineTo(COL['R+'],ROWY(17)); x.lineTo(COL['R-'],ROWY(17)); x.stroke();
+x.fillStyle='#8b949e'; x.font='9px system-ui'; x.textAlign='left'; x.fillText('10µF',COL['R+']+12,ROWY(16)+12);
+</script>
+</body>
+</html>
