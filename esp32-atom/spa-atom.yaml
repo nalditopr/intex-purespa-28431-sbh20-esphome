@@ -1,0 +1,73 @@
+substitutions:
+  name: intex-spa-atom
+  friendly_name: "Intex PureSpa (Atom)"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: m5stack-atom
+  framework:
+    type: arduino       # required: the component uses the Arduino HAL + attachInterruptArg
+
+# Local component (this folder). To consume from GitHub instead, use:
+#   source: github://nalditopr/intex-purespa-28431-sbh20-esphome
+#   (and point it at esp32-atom/components)
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [intexsbh20]
+
+logger:
+api:
+  encryption:
+    key: !secret api_key
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${name} setup"
+
+captive_portal:
+
+# Core entity domains
+climate:
+sensor:
+switch:
+text_sensor:
+
+# Atom Lite default pins (all GPIO < 32, required by the fast ISR path):
+#   CLK = G22, DATA = G19, LATCH = G23
+intexsbh20:
+  clock_pin: 22
+  data_pin: 19
+  latch_pin: 23
+  climate:
+    name: Thermostat
+    icon: mdi:hot-tub
+  power:
+    name: Power
+    icon: mdi:power
+  filter:
+    name: Filter
+    icon: mdi:air-filter
+  bubble:
+    name: Bubble
+    icon: mdi:chart-bubble
+  water_temperature:
+    name: Water temperature
+    icon: mdi:water-thermometer
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+    unit_of_measurement: "°C"
+  error_text:
+    name: Error
+    icon: mdi:alert-circle
+    entity_category: diagnostic
