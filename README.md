@@ -40,10 +40,12 @@ offloads timing to PIO. For an SB-H20, a **$4 D1 mini is the path of least resis
 | Wemos / LOLIN **D1 mini** (ESP8266) | ESP12/HUZZAH also work |
 | **BSS138** 4-channel level shifter | *not* TXS0108E — auto-direction chips fight the open-drain DATA line |
 | 3 × **470 Ω** resistors | series on each signal line (see gotcha #4) |
+| **Inline fuse, ~250–500 mA** | on the 5 V tap — protects the spa mainboard (see gotcha #6) |
 | Cable tap / 3D-printed connector | to splice the panel↔mainboard ribbon |
 | Hookup wire, perfboard, IP-rated box | permanent outdoor install |
 
-Total ≈ $8–15.
+Total ≈ $8–15. Power draw is tiny: ~20 mA idle, ~70 mA on WiFi, ~100 mA at power-on —
+size the fuse just above the inrush.
 
 ### Parts used on this build (tested)
 
@@ -109,6 +111,14 @@ supply is the one that's *dead steady*.
    limit that injection. (Also keep signals on D5/D6/D7 — never the D3/D4/D8 strap pins.)
 5. **Never power USB + spa at the same time.** Flash on USB, then run on spa 5 V only.
    Future updates go over **OTA**.
+6. **Fuse the 5 V tap (~250–500 mA).** The spa mainboard's spare current budget is
+   unknown — a fault in your add-on could damage it. An inline fuse just above the
+   ~100 mA power-on inrush protects the board. *(via jnsbyr's hardware notes.)*
+7. **Button presses can be occasionally unreliable.** On the ESP8266, WiFi processing
+   preempts the timing-critical signalling, so a press is sometimes missed or doubled.
+   Keep WiFi signal strong (RSSI) and expect the rare retry. The underlying firmware
+   re-reads state after each press to self-correct. This is inherent to ESP8266 — the
+   Pico W version avoids it with PIO.
 
 ---
 
