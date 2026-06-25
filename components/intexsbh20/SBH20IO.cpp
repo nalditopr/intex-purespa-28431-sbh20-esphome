@@ -26,6 +26,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/spi_slave.h"
+#include "soc/spi_periph.h"
+#include "esp_rom_gpio.h"
 #include "esphome/core/log.h"
 
 // bit mask for LEDs
@@ -212,11 +214,14 @@ volatile uint32_t SBH20IO::dbgSpiLen16 = 0;
 volatile uint32_t SBH20IO::dbgSpiLenOther = 0;
 volatile uint32_t SBH20IO::dbgLastLen = 0;
 volatile uint16_t SBH20IO::dbgLastRaw = 0;
+volatile uint32_t SBH20IO::dbgMaxLen = 0;
+volatile uint16_t SBH20IO::dbgWord0 = 0;
+volatile uint16_t SBH20IO::dbgWord1 = 0;
 
 // ---- ESP32 SPI-slave hardware capture buffers (Stage 1: log-only) ----
 #define SBH_SPI_HOST SPI3_HOST
 static const int SBH_QUEUE = 8;
-static WORD_ALIGNED_ATTR uint8_t s_spiRx[SBH_QUEUE][4];
+static WORD_ALIGNED_ATTR uint8_t s_spiRx[SBH_QUEUE][32];
 static spi_slave_transaction_t s_spiTrans[SBH_QUEUE];
 
 // ESP32 fast GPIO helpers (require GPIO < 32)
@@ -289,10 +294,15 @@ void SBH20IO::spiTask(void *arg)
   }
   ESP_LOGI("sbh20spi", "SPI slave capture started (SCLK=%u MOSI=%u CS=%u)", pinClock, pinData, pinLatch);
 
+  // PROBE: active-low CS captured only ~1 bit/CS, so the data is clocked while LATCH is
+  // HIGH. Invert the CS input so the transaction is active during the LATCH-high window.
+  // Generous 256-bit length so trans_len reveals the true bits-per-window.
+  esp_rom_gpio_connect_in_signal(pinLatch, spi_periph_signal[SBH_SPI_HOST].spics_in, true);
+
   for (int i = 0; i < SBH_QUEUE; i++)
   {
     s_spiTrans[i] = {};
-    s_spiTrans[i].length = 16; // bits
+    s_spiTrans[i].length = 256; // bits (generous probe window)
     s_spiTrans[i].tx_buffer = nullptr;
     s_spiTrans[i].rx_buffer = s_spiRx[i];
     spi_slave_queue_trans(SBH_SPI_HOST, &s_spiTrans[i], portMAX_DELAY);
@@ -304,21 +314,24 @@ void SBH20IO::spiTask(void *arg)
     if (spi_slave_get_trans_result(SBH_SPI_HOST, &done, portMAX_DELAY) != ESP_OK)
       continue;
     dbgSpiTotal++;
-    uint32_t len = done->trans_len; // bits actually clocked while CS was asserted
+    uint32_t len = done->trans_len; // bits clocked while CS (LATCH, now inverted) was active
     dbgLastLen = len;
-    if (len == 16)
+    if (len > dbgMaxLen) dbgMaxLen = len;
+    if (len >= 8)
     {
-      dbgSpiLen16++;
       uint8_t *b = (uint8_t *) done->rx_buffer;
-      uint16_t raw = ((uint16_t) b[0] << 8) | b[1]; // MSB-first
-      dbgLastRaw = raw;
-      uint16_t frame = (uint16_t) ~raw;             // protocol: DATA bits inverted
-      // STAGE 1: classify only (prove framing + inversion before wiring decode)
+      uint16_t w0 = (uint16_t) ~(((uint16_t) b[0] << 8) | b[1]); // first 16 bits, inverted
+      uint16_t w1 = (uint16_t) ~(((uint16_t) b[2] << 8) | b[3]); // next 16 bits, inverted
+      dbgWord0 = w0;
+      dbgWord1 = w1;
+      dbgLastRaw = (uint16_t)(((uint16_t) b[0] << 8) | b[1]);
+      uint16_t frame = w0; // classify the first word as if it were a 16-bit frame
       if (frame == FRAME_TYPE::CUE) dbgCue++;
       else if (frame & FRAME_TYPE::DIGIT) { dbgDigit++; dbgLastDigit = frame; }
       else if (frame & FRAME_TYPE::LED) { dbgLed++; dbgLastLed = frame; }
       else if (frame & FRAME_TYPE::BUTTON) { dbgButton++; dbgLastButton = frame; }
       else if (frame != 0) dbgOther++;
+      if (len == 16) dbgSpiLen16++; else dbgSpiLenOther++;
       state.frameCounter++;
     }
     else
@@ -717,10 +730,11 @@ void SBH20IO::clockRisingISR(void *arg)
 
 void SBH20IO::logDebug()
 {
-  ESP_LOGD("sbh20dbg", "spiTot=%u len16=%u lenX=%u lastLen=%u lastRaw=0x%04X | cue=%u dig=%u led=%u btn=%u oth=%u | LED=0x%04X DIG=0x%04X",
-           dbgSpiTotal, dbgSpiLen16, dbgSpiLenOther, dbgLastLen, dbgLastRaw,
-           dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther, dbgLastLed, dbgLastDigit);
+  ESP_LOGD("sbh20dbg", "spiTot=%u len16=%u lenX=%u lastLen=%u maxLen=%u | w0=0x%04X w1=0x%04X | cue=%u dig=%u led=%u btn=%u oth=%u",
+           dbgSpiTotal, dbgSpiLen16, dbgSpiLenOther, dbgLastLen, dbgMaxLen, dbgWord0, dbgWord1,
+           dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther);
   dbgSpiTotal = dbgSpiLen16 = dbgSpiLenOther = 0;
+  dbgMaxLen = 0;
   dbgCue = dbgDigit = dbgLed = dbgButton = dbgOther = 0;
 }
 

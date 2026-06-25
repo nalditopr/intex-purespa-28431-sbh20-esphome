@@ -206,6 +206,8 @@ private:
   static volatile uint32_t dbgIsrCalls, dbgLatchCalls;
   static volatile uint32_t dbgSpiTotal, dbgSpiLen16, dbgSpiLenOther, dbgLastLen;
   static volatile uint16_t dbgLastRaw;
+  static volatile uint32_t dbgMaxLen;
+  static volatile uint16_t dbgWord0, dbgWord1;
 
 private:
   uint16_t convertDisplayToCelsius(uint16_t value) const;
