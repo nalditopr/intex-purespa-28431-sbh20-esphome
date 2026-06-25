@@ -720,7 +720,11 @@ void SBH20IO::clockRisingISR(void *arg)
       else if (frame & FRAME_TYPE::LED)
       {
         dbgLed++; dbgLastLed = frame;
-        decodeLED(frame);
+        // ignore corrupt LED frames: a valid one only ever sets bits in the LED set
+        // (marker 0x4000 | FILTER | BUBBLE | HEATER_STANDBY | NO_BEEP | HEATER_ON |
+        // POWER = 0x5781). Garbage reads carry stray bits (e.g. 0x8000) and would
+        // otherwise get "confirmed" and flip Power/Filter on their own.
+        if (!(frame & ~((uint16_t)0x5781))) decodeLED(frame);
       }
       else if (frame & FRAME_TYPE::BUTTON)
       {
@@ -840,6 +844,16 @@ inline void SBH20IO::decodeDisplay(uint16_t frame)
   {
     value = (value & 0xFFF0) | digit;
     g_dbgDisp = value;
+
+    // Reject garbage assemblies. The multiplexed display frequently yields scans whose
+    // segments don't form valid characters (every digit decodes to LET_N -> 0xAAAA);
+    // mixed in are the real readings (e.g. 0x103F = "103F"). Only let a plausible value
+    // -- a temperature (C/F marker), a blank, or an error code -- reach the debounce, so
+    // the garbage can't be "confirmed" as the temperature. Ignored scans don't disturb
+    // the debounce chain, so the consistent real readings still converge.
+    if (!(displayIsTemp(value) || displayIsBlank(value) || displayIsError(value)))
+      return;
+
     if (value != pValue)
     {
       pValue = value;
