@@ -265,19 +265,52 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   // preset DATA output latch low so enabling the driver pulls the line low (TX)
   REG_WRITE(GPIO_OUT_W1TC_REG, maskData);
 
-  // Install the timing-critical ISRs from a task pinned to core 1, so the
-  // clock-rising / latch-falling interrupts are serviced on APP_CPU while WiFi
+  // Start the polled receiver pinned to core 1, so it runs on APP_CPU while WiFi
   // runs on core 0 and cannot preempt the receive/transmit timing.
-  xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_isr", 4096, nullptr, 12, nullptr, 1);
+  xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_rx", 4096, nullptr, 12, nullptr, 1);
 }
 
-// ESP32: this task runs pinned to core 1; it installs the GPIO ISRs there (so they are
-// serviced on APP_CPU, isolated from WiFi on core 0) and then exits. All decoding then
-// happens in clockRisingISR / latchFallingISR below — the proven piitaya/jnsbyr path.
+// ESP32 polled receiver (pinned to core 1). The SB-H20 clock is ~140 kHz with ~2 us
+// high pulses; the Arduino GPIO interrupt path on the ESP32 is far too slow for that
+// (a live test caught only ~13% of clock edges -> 16-bit words aliased across multiple
+// real frames -> garbage). Instead we busy-poll the clock line flat-out on core 1
+// (WiFi lives on core 0) and run the proven per-edge bit decoder — clockRisingISR /
+// latchFallingISR, unchanged — on each detected edge. The full-speed poll catches every
+// edge (the diagnostic scanner already proved this). We capture in ~12 ms bursts then
+// sleep ~4 ms so the ESPHome loopTask (also core 1, lower priority) and the idle task
+// still get CPU and the task watchdog is fed; a burst sees dozens of frames, far more
+// than enough to read temperature and LED state, which repeat continuously.
 void SBH20IO::spiTask(void *arg)
 {
-  installISRs(arg); // attach clock-rising + latch-falling interrupts on THIS core
-  vTaskDelete(nullptr);
+  const uint32_t clk = (uint32_t)1 << pinClock;
+  const uint32_t lat = (uint32_t)1 << pinLatch;
+
+  vTaskDelay(3000 / portTICK_PERIOD_MS); // let WiFi settle
+
+  for (;;)
+  {
+    int64_t t0 = esp_timer_get_time();
+    uint32_t g = REG_READ(GPIO_IN_REG);
+    uint32_t prevClk = g & clk;
+    uint32_t prevLat = g & lat;
+    uint32_t iter = 0;
+
+    // tight capture burst: detect clock-rising + latch-falling edges and decode
+    for (;;)
+    {
+      g = REG_READ(GPIO_IN_REG);
+      uint32_t curClk = g & clk;
+      uint32_t curLat = g & lat;
+      if (curClk && !prevClk) clockRisingISR(nullptr);   // sample + accumulate one bit
+      if (!curLat && prevLat) latchFallingISR(nullptr);  // release DATA after a button TX
+      prevClk = curClk;
+      prevLat = curLat;
+      // check the clock only every 1024 iterations so the timer call can't slow the poll
+      if (((++iter) & 0x3FF) == 0 && (esp_timer_get_time() - t0) >= 12000) break;
+    }
+
+    vTaskDelay(4 / portTICK_PERIOD_MS); // yield to loopTask + idle (feeds the WDT)
+  }
 }
 
 void SBH20IO::processFrames()
