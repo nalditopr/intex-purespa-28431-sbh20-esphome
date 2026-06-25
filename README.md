@@ -30,6 +30,10 @@ controller and a couple of details differ. (The Raspberry Pi Pico W is a third o
 — [`RealByron/PicoW-Intex-PureSpa`](https://github.com/RealByron/PicoW-Intex-PureSpa)
 — which offloads timing to PIO.)
 
+![Both builds: ESP8266 / D1 mini (left, red) and ESP32 / Atom Lite (right, yellow)](photos/builds-esp8266-vs-esp32.png)
+
+*Left: ESP8266 / Wemos D1 mini. Right: ESP32 / M5Stack Atom Lite (BSS138 + 470&nbsp;Ω + screw terminals on an ElectroCookie Mini).*
+
 ### → ESP32 build (recommended): [esp32-atom/README.md](esp32-atom/README.md)
 
 The rest of this page is the **ESP8266 / Wemos D1 mini** build.
