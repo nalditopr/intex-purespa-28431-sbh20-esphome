@@ -275,8 +275,8 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
 // The SB-H20 clock rings through the level shifter, so per-edge GPIO interrupts on the
 // ESP32 are unreliable; instead we busy-poll on core 1 (WiFi runs on core 0) and run the
 // proven per-edge decoder (clockRisingISR / latchFallingISR, unchanged from the D1-mini
-// path) on each detected edge, in ~12 ms bursts with a ~4 ms yield so the ESPHome
-// loopTask + idle task still get CPU and the task watchdog is fed.
+// path) on each detected edge, in ~24 ms bursts (> one 21 ms display cycle) with a ~6 ms
+// yield so the ESPHome loopTask + idle task still get CPU and the task watchdog is fed.
 //
 // It first auto-detects which signal pin is the clock — the clock has far more
 // transitions than data (the scan measured G19=6676 vs G22=905). The YAML clock_pin /
@@ -344,10 +344,12 @@ void SBH20IO::spiTask(void *arg)
       if (!curLat && prevLat) latchFallingISR(nullptr);  // release DATA after a button TX
       prevClk = curClk;
       prevLat = curLat;
-      if (((++iter) & 0x3FF) == 0 && (esp_timer_get_time() - t0) >= 12000) break;
+      // burst > one 21 ms display cycle so all 4 digit positions arrive within a single
+      // uninterrupted burst (the display assembly needs them consecutive)
+      if (((++iter) & 0x3FF) == 0 && (esp_timer_get_time() - t0) >= 24000) break;
     }
 
-    vTaskDelay(4 / portTICK_PERIOD_MS); // yield to loopTask + idle (feeds the WDT)
+    vTaskDelay(6 / portTICK_PERIOD_MS); // yield to loopTask + idle (feeds the WDT)
   }
 }
 
@@ -707,10 +709,11 @@ void SBH20IO::clockRisingISR(void *arg)
       else if (frame & FRAME_TYPE::DIGIT)
       {
         dbgDigit++; dbgLastDigit = frame;
-        // defer heavy display decode to loop() so the ISR stays short
-        uint16_t dnext = (uint16_t)((frameBufHead + 1) & FRAME_BUF_MASK);
-        if (dnext != frameBufTail) { frameBuf[frameBufHead] = frame; frameBufHead = dnext; }
-        else { state.frameDropped++; }
+        // Decode inline. The poll task (not an ISR) calls this, so there is no need to
+        // defer to loop() via a ring buffer — and under the busy-poll that buffer was
+        // overflowing, dropping digit frames and breaking the 4-position display
+        // assembly that the temperature reading depends on.
+        decodeDisplay(frame);
       }
       else if (frame & FRAME_TYPE::LED)
       {
