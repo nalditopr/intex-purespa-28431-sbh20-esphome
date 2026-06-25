@@ -25,6 +25,7 @@
 #include "soc/soc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esphome/core/log.h"
 
 // bit mask for LEDs
 namespace FRAME_LED
@@ -188,6 +189,16 @@ volatile uint8_t SBH20IO::pinData = 0;
 volatile uint8_t SBH20IO::pinLatch = 0;
 volatile uint32_t SBH20IO::maskData = 0;
 volatile uint32_t SBH20IO::maskLatch = 0;
+
+// --- debug counters (debug build) ---
+volatile uint32_t SBH20IO::dbgCue = 0;
+volatile uint32_t SBH20IO::dbgDigit = 0;
+volatile uint32_t SBH20IO::dbgLed = 0;
+volatile uint32_t SBH20IO::dbgButton = 0;
+volatile uint32_t SBH20IO::dbgOther = 0;
+volatile uint16_t SBH20IO::dbgLastLed = 0;
+volatile uint16_t SBH20IO::dbgLastDigit = 0;
+volatile uint16_t SBH20IO::dbgLastButton = 0;
 
 // ESP32 fast GPIO helpers (require GPIO < 32)
 inline bool SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
@@ -587,23 +598,26 @@ void SBH20IO::clockRisingISR(void *arg)
 
       if (frame == FRAME_TYPE::CUE)
       {
-        // cue frame, ignore
+        dbgCue++;
       }
       else if (frame & FRAME_TYPE::DIGIT)
       {
+        dbgDigit++; dbgLastDigit = frame;
         decodeDisplay(frame);
       }
       else if (frame & FRAME_TYPE::LED)
       {
+        dbgLed++; dbgLastLed = frame;
         decodeLED(frame);
       }
       else if (frame & FRAME_TYPE::BUTTON)
       {
+        dbgButton++; dbgLastButton = frame;
         decodeButton(frame);
       }
       else if (frame != 0)
       {
-        // unsupported frame
+        dbgOther++;
       }
 
       receivedBits = 0;
@@ -614,6 +628,13 @@ void SBH20IO::clockRisingISR(void *arg)
     frame = 0;
     receivedBits = 0;
   }
+}
+
+void SBH20IO::logDebug()
+{
+  ESP_LOGD("sbh20dbg", "cue=%u digit=%u led=%u btn=%u other=%u | lastLED=0x%04X lastDIGIT=0x%04X lastBTN=0x%04X",
+           dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther, dbgLastLed, dbgLastDigit, dbgLastButton);
+  dbgCue = dbgDigit = dbgLed = dbgButton = dbgOther = 0;
 }
 
 inline uint8_t SBH20IO::BCD(uint16_t value)

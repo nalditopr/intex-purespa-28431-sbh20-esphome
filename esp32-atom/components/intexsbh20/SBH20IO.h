@@ -73,6 +73,8 @@ public:
   // task pinned to core 1 so the timing-critical ISRs run isolated from WiFi.
   static void installISRs(void *arg);
 
+  void logDebug(); // debug build: frame-type stats
+
 public:
   bool isOnline() const;
 
@@ -189,6 +191,10 @@ private:
   static volatile uint8_t pinLatch;
   static volatile uint32_t maskData;
   static volatile uint32_t maskLatch;
+
+  // debug counters (debug build)
+  static volatile uint32_t dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther;
+  static volatile uint16_t dbgLastLed, dbgLastDigit, dbgLastButton;
 
 private:
   uint16_t convertDisplayToCelsius(uint16_t value) const;
