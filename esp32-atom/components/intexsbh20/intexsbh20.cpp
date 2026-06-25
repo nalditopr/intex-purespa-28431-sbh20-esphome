@@ -23,6 +23,10 @@ void IntexSBH20::update()
 	sbh_.logDebug();
 
 	int errorValue = sbh_.getErrorValue();
+
+	if (problem_)
+		problem_->publish_state(errorValue != 0); // dedupes internally; on = panel showing an Exx code
+
 	if (errorValue != 0)
 	{
 		status_set_warning();

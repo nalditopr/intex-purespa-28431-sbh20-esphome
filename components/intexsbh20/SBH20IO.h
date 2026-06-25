@@ -96,6 +96,9 @@ public:
   void setHeaterOn(bool on);
   void setPowerOn(bool on);
 
+  // true while a setpoint change is still being applied by the non-blocking sequencer
+  bool isAdjustingTarget() const { return pendingTargetTemp != UNDEF::USHORT; }
+
   unsigned int getErrorValue() const;
   String getErrorMessage(unsigned int errorValue) const;
 
@@ -133,8 +136,6 @@ private:
   {
   public:
     static const unsigned int PRESS_COUNT = BLINK::PERIOD / CYCLE::PERIOD - 2;
-    static const unsigned int ACK_CHECK_PERIOD = 10; // ms
-    static const unsigned int ACK_TIMEOUT = 2 * PRESS_COUNT * CYCLE::PERIOD; // ms
   };
 
 private:
@@ -211,14 +212,27 @@ private:
 
 private:
   uint16_t convertDisplayToCelsius(uint16_t value) const;
-  bool waitBuzzerOff() const;
-  bool pressButton(volatile unsigned int &buttonPressCount);
-  bool changeTargetTemperature(int up);
   void processFrames();
+  void tickControls(); // non-blocking control sequencer, called from loop()
 
 private:
   LANG language;
   unsigned long lastStateUpdateTime = 0;
+
+  // Non-blocking control sequencer state (touched only from loop()/control(), never the
+  // ISR). setTargetTemperature() just records the request; tickControls() drives it as a
+  // closed loop -- read the panel's setpoint, press once toward the target, re-read, repeat
+  // -- so the loop never blocks and the result self-corrects (no open-loop count, no
+  // overshoot from the reveal press).
+  static const unsigned long CONTROL_STEP_MS = 600;          // min spacing between queued presses
+  static const unsigned long CONTROL_READ_TIMEOUT_MS = 6000; // give up if the setpoint never re-latches
+  static const int CONTROL_MAX_PRESSES = 60;                 // safety cap (full range + corrections)
+  uint16_t pendingTargetTemp = UNDEF::USHORT; // requested setpoint, UNDEF::USHORT = idle
+  unsigned long pendingTargetSetMs = 0;       // when it was requested
+  int pendingTempDir = 0;                     // 0 = direction not yet known, +1 = up, -1 = down
+  int pendingPressCount = 0;                  // presses issued this request (vs CONTROL_MAX_PRESSES)
+  bool pendingAwaitingRead = false;           // a press was sent; waiting for the fresh setpoint re-latch
+  unsigned long lastControlStepMs = 0;        // time of last queued press / read nudge
 };
 
 #endif /* SBH20IO_H */
