@@ -35,9 +35,11 @@ SBHSwitch = sbh_ns.class_('SBHSwitch', switch.Switch)
 CONFIG_SCHEMA = cv.polling_component_schema("5s").extend(
 	{
 		cv.GenerateID(): cv.declare_id(IntexSBH20),
-		# Atom Lite defaults: CLK=G22, DATA=G19, LATCH=G23 (all < 32)
-		cv.Optional(CONF_CLOCK_PIN, default=22): GPIO_BELOW_32,
-		cv.Optional(CONF_DATA_PIN, default=19): GPIO_BELOW_32,
+		# Atom Lite defaults: CLK=G19, DATA=G22, LATCH=G23 (all < 32).
+		# (Verified by a live pin-role scan against the spa: G19 carries the
+		# ~140 kHz clock, G22 the data, G23 the per-frame latch strobe.)
+		cv.Optional(CONF_CLOCK_PIN, default=19): GPIO_BELOW_32,
+		cv.Optional(CONF_DATA_PIN, default=22): GPIO_BELOW_32,
 		cv.Optional(CONF_LATCH_PIN, default=23): GPIO_BELOW_32,
 		cv.Optional(CONF_CLIMATE): climate.climate_schema(SBHClimate).extend(),
 		cv.Optional(CONF_POWER): switch.switch_schema(SBHSwitch).extend(),

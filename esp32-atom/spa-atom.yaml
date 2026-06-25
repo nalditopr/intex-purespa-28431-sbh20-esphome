@@ -47,11 +47,11 @@ sensor:
 switch:
 text_sensor:
 
-# Atom Lite default pins (all GPIO < 32, required by the fast ISR path):
-#   CLK = G22, DATA = G19, LATCH = G23
+# Atom Lite pins (all GPIO < 32, required by the fast ISR path). Verified against
+# the live spa bus with a pin-role scan: G19 = clock, G22 = data, G23 = latch.
 intexsbh20:
-  clock_pin: 22
-  data_pin: 19
+  clock_pin: 19
+  data_pin: 22
   latch_pin: 23
   climate:
     name: Thermostat

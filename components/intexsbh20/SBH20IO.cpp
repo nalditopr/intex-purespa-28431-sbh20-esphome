@@ -253,84 +253,31 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   maskData = (uint32_t)1 << dataPin;
   maskLatch = (uint32_t)1 << latchPin;
 
-  // preset DATA output latch low so enabling the driver pulls the line low (TX, later stage)
+  // Configure all three signals as inputs so the fast GPIO_IN register reads work.
+  // (A pin-role scan proved the data line read stuck until its input path was
+  // enabled here; attachInterrupt only enables the clock + latch pins.) The data
+  // line is open-drain with an external pull-up via the level shifter — we switch
+  // it to an output only transiently to signal a button press.
+  pinMode(pinClock, INPUT);
+  pinMode(pinData, INPUT);
+  pinMode(pinLatch, INPUT);
+
+  // preset DATA output latch low so enabling the driver pulls the line low (TX)
   REG_WRITE(GPIO_OUT_W1TC_REG, maskData);
 
-  // ESP32 SPI-slave hardware capture owns CLK(SCLK)/DATA(MOSI)/LATCH(CS).
-  // Start it on core 1 so its DMA/ISR live on APP_CPU, away from WiFi (core 0).
-  xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_spi", 4096, nullptr, 12, nullptr, 1);
+  // Install the timing-critical ISRs from a task pinned to core 1, so the
+  // clock-rising / latch-falling interrupts are serviced on APP_CPU while WiFi
+  // runs on core 0 and cannot preempt the receive/transmit timing.
+  xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_isr", 4096, nullptr, 12, nullptr, 1);
 }
 
-// ESP32 pin-role scanner: the previous waveform dump proved (a) the latch line never
-// goes low on G23, and (b) the clock/data labels are swapped (G19 carries the real
-// ~140 kHz clock, G22 the held data). The frame-enable (latch) signal — which must go
-// LOW for ~100 us per 16-bit frame — appeared on NONE of G19/G22/G23. This scanner
-// samples ALL of the Atom Lite's broken-out pins for 50 ms and reports each pin's
-// signature so we can map wire -> role directly:
-//   CLOCK = highest transition count   DATA = moderate transitions, mostly idle-high
-//   LATCH = the pin with periodic ~50-120 us LOW pulses (maxLowUs)
-//   disconnected = trans=0 (duty 0% or 100%)
+// ESP32: this task runs pinned to core 1; it installs the GPIO ISRs there (so they are
+// serviced on APP_CPU, isolated from WiFi on core 0) and then exits. All decoding then
+// happens in clockRisingISR / latchFallingISR below — the proven piitaya/jnsbyr path.
 void SBH20IO::spiTask(void *arg)
 {
-  static const int NP = 8;
-  static const uint8_t pins[NP] = {19, 21, 22, 23, 25, 26, 32, 33};
-
-  for (int i = 0; i < NP; i++) pinMode(pins[i], INPUT); // ensure input path enabled
-
-  vTaskDelay(3000 / portTICK_PERIOD_MS); // let WiFi settle
-
-  for (;;)
-  {
-    uint32_t trans[NP] = {0};
-    uint32_t highSamp[NP] = {0};
-    uint32_t maxLow[NP] = {0};   // longest continuous LOW run (us) -> latch finder
-    uint32_t lowStart[NP] = {0};
-    uint8_t prev[NP];
-    uint32_t samples = 0;
-
-    int64_t t0 = esp_timer_get_time();
-    uint32_t r0 = REG_READ(GPIO_IN_REG), r1 = REG_READ(GPIO_IN1_REG);
-    for (int i = 0; i < NP; i++)
-    {
-      uint8_t p = pins[i];
-      prev[i] = (p < 32) ? ((r0 >> p) & 1) : ((r1 >> (p - 32)) & 1);
-      lowStart[i] = 0;
-    }
-
-    int64_t now;
-    while ((now = esp_timer_get_time()) - t0 < 50000) // 50 ms window (~2.4 frame cycles)
-    {
-      uint32_t a = REG_READ(GPIO_IN_REG), b = REG_READ(GPIO_IN1_REG);
-      uint32_t us = (uint32_t)(now - t0);
-      samples++;
-      for (int i = 0; i < NP; i++)
-      {
-        uint8_t p = pins[i];
-        uint8_t v = (p < 32) ? ((a >> p) & 1) : ((b >> (p - 32)) & 1);
-        if (v) highSamp[i]++;
-        if (v != prev[i])
-        {
-          trans[i]++;
-          if (v) { uint32_t d = us - lowStart[i]; if (d > maxLow[i]) maxLow[i] = d; }
-          else   { lowStart[i] = us; }
-          prev[i] = v;
-        }
-      }
-    }
-
-    ESP_LOGI("scan", "=== %u samples / 50ms (%u ns/sample)  CLOCK=most trans, LATCH=big maxLowUs ===",
-             (unsigned) samples, (unsigned)(50000000ULL / (samples ? samples : 1)));
-    for (int i = 0; i < NP; i++)
-    {
-      ESP_LOGI("scan", "G%-2u trans=%-6u duty=%3u%%  maxLowUs=%-5u %s",
-               pins[i], (unsigned) trans[i],
-               (unsigned)(100ULL * highSamp[i] / (samples ? samples : 1)),
-               (unsigned) maxLow[i],
-               trans[i] == 0 ? "(idle/disconnected)" : "");
-      vTaskDelay(1); // let the logger flush
-    }
-    vTaskDelay(8000 / portTICK_PERIOD_MS);
-  }
+  installISRs(arg); // attach clock-rising + latch-falling interrupts on THIS core
+  vTaskDelete(nullptr);
 }
 
 void SBH20IO::processFrames()
@@ -721,11 +668,10 @@ void SBH20IO::clockRisingISR(void *arg)
 
 void SBH20IO::logDebug()
 {
-  ESP_LOGD("sbh20dbg", "spiTot=%u len16=%u lenX=%u lastLen=%u maxLen=%u | w0=0x%04X w1=0x%04X | cue=%u dig=%u led=%u btn=%u oth=%u",
-           dbgSpiTotal, dbgSpiLen16, dbgSpiLenOther, dbgLastLen, dbgMaxLen, dbgWord0, dbgWord1,
-           dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther);
-  dbgSpiTotal = dbgSpiLen16 = dbgSpiLenOther = 0;
-  dbgMaxLen = 0;
+  ESP_LOGD("sbh20dbg", "clkISR=%u latchISR=%u frames=%u | cue=%u dig=%u led=%u btn=%u oth=%u | lastLed=0x%04X lastDigit=0x%04X lastBtn=0x%04X",
+           dbgIsrCalls, dbgLatchCalls, state.frameCounter,
+           dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther,
+           dbgLastLed, dbgLastDigit, dbgLastButton);
   dbgCue = dbgDigit = dbgLed = dbgButton = dbgOther = 0;
 }
 
