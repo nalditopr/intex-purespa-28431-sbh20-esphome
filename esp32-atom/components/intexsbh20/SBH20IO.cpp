@@ -25,6 +25,7 @@
 #include "soc/soc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/spi_slave.h"
 #include "esphome/core/log.h"
 
 // bit mask for LEDs
@@ -206,6 +207,17 @@ volatile uint16_t SBH20IO::frameBufHead = 0;
 volatile uint16_t SBH20IO::frameBufTail = 0;
 volatile uint32_t SBH20IO::dbgIsrCalls = 0;
 volatile uint32_t SBH20IO::dbgLatchCalls = 0;
+volatile uint32_t SBH20IO::dbgSpiTotal = 0;
+volatile uint32_t SBH20IO::dbgSpiLen16 = 0;
+volatile uint32_t SBH20IO::dbgSpiLenOther = 0;
+volatile uint32_t SBH20IO::dbgLastLen = 0;
+volatile uint16_t SBH20IO::dbgLastRaw = 0;
+
+// ---- ESP32 SPI-slave hardware capture buffers (Stage 1: log-only) ----
+#define SBH_SPI_HOST SPI3_HOST
+static const int SBH_QUEUE = 8;
+static WORD_ALIGNED_ATTR uint8_t s_spiRx[SBH_QUEUE][4];
+static spi_slave_transaction_t s_spiTrans[SBH_QUEUE];
 
 // ESP32 fast GPIO helpers (require GPIO < 32)
 inline bool SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
@@ -220,17 +232,8 @@ inline void SBH20IO::releaseData()
   REG_WRITE(GPIO_ENABLE_W1TC_REG, maskData); // disable driver -> input, pull-up high
 }
 
-// core-1 ISR installation
-static volatile bool s_isrInstalled = false;
-static void *s_isrArg = nullptr;
-
-static void sbh20_isr_install_task(void *param)
-{
-  SBH20IO::installISRs(s_isrArg);
-  s_isrInstalled = true;
-  vTaskDelete(nullptr);
-}
-
+// (legacy GPIO-ISR capture path retained below for reference/fallback; not used in the
+//  SPI-slave build — setup() starts spiTask instead.)
 void SBH20IO::installISRs(void *arg)
 {
   attachInterruptArg(digitalPinToInterrupt(pinLatch), SBH20IO::latchFallingISR, arg, FALLING);
@@ -248,23 +251,81 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   maskData = (uint32_t)1 << dataPin;
   maskLatch = (uint32_t)1 << latchPin;
 
-  pinMode(pinClock, INPUT);
-  pinMode(pinData, INPUT);
-  pinMode(pinLatch, INPUT);
-
-  // preset DATA output latch low so enabling the driver pulls the line low
+  // preset DATA output latch low so enabling the driver pulls the line low (TX, later stage)
   REG_WRITE(GPIO_OUT_W1TC_REG, maskData);
 
-  // install ISRs from a task pinned to core 1 (APP_CPU) so the GPIO ISR service
-  // runs on core 1, isolated from WiFi on core 0
-  s_isrInstalled = false;
-  s_isrArg = this;
-  xTaskCreatePinnedToCore(sbh20_isr_install_task, "sbh20_isr", 4096, nullptr, 5, nullptr, 1);
+  // ESP32 SPI-slave hardware capture owns CLK(SCLK)/DATA(MOSI)/LATCH(CS).
+  // Start it on core 1 so its DMA/ISR live on APP_CPU, away from WiFi (core 0).
+  xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_spi", 4096, nullptr, 12, nullptr, 1);
+}
 
-  unsigned long start = millis();
-  while (!s_isrInstalled && timeDiff(millis(), start) < 1000)
+// ESP32 SPI-slave capture task (Stage 1: log-only — classify words, no decode wired yet).
+// CLK->SCLK, DATA->MOSI, LATCH->CS(active-low), mode 3, MSB-first; each CS-low period
+// clocks one 16-bit word into DMA. The protocol inverts the data bits, so frame = ~raw.
+void SBH20IO::spiTask(void *arg)
+{
+  spi_bus_config_t bus = {};
+  bus.mosi_io_num = pinData;
+  bus.miso_io_num = -1;
+  bus.sclk_io_num = pinClock;
+  bus.quadwp_io_num = -1;
+  bus.quadhd_io_num = -1;
+  bus.max_transfer_sz = 4;
+
+  spi_slave_interface_config_t slv = {};
+  slv.spics_io_num = pinLatch;
+  slv.flags = 0;   // MSB-first
+  slv.queue_size = SBH_QUEUE;
+  slv.mode = 3;    // CPOL=1, CPHA=1
+  slv.post_setup_cb = nullptr;
+  slv.post_trans_cb = nullptr;
+
+  esp_err_t err = spi_slave_initialize(SBH_SPI_HOST, &bus, &slv, SPI_DMA_CH_AUTO);
+  if (err != ESP_OK)
   {
-    delay(1);
+    ESP_LOGE("sbh20spi", "spi_slave_initialize failed: %d", (int) err);
+    vTaskDelete(nullptr);
+    return;
+  }
+  ESP_LOGI("sbh20spi", "SPI slave capture started (SCLK=%u MOSI=%u CS=%u)", pinClock, pinData, pinLatch);
+
+  for (int i = 0; i < SBH_QUEUE; i++)
+  {
+    s_spiTrans[i] = {};
+    s_spiTrans[i].length = 16; // bits
+    s_spiTrans[i].tx_buffer = nullptr;
+    s_spiTrans[i].rx_buffer = s_spiRx[i];
+    spi_slave_queue_trans(SBH_SPI_HOST, &s_spiTrans[i], portMAX_DELAY);
+  }
+
+  spi_slave_transaction_t *done;
+  for (;;)
+  {
+    if (spi_slave_get_trans_result(SBH_SPI_HOST, &done, portMAX_DELAY) != ESP_OK)
+      continue;
+    dbgSpiTotal++;
+    uint32_t len = done->trans_len; // bits actually clocked while CS was asserted
+    dbgLastLen = len;
+    if (len == 16)
+    {
+      dbgSpiLen16++;
+      uint8_t *b = (uint8_t *) done->rx_buffer;
+      uint16_t raw = ((uint16_t) b[0] << 8) | b[1]; // MSB-first
+      dbgLastRaw = raw;
+      uint16_t frame = (uint16_t) ~raw;             // protocol: DATA bits inverted
+      // STAGE 1: classify only (prove framing + inversion before wiring decode)
+      if (frame == FRAME_TYPE::CUE) dbgCue++;
+      else if (frame & FRAME_TYPE::DIGIT) { dbgDigit++; dbgLastDigit = frame; }
+      else if (frame & FRAME_TYPE::LED) { dbgLed++; dbgLastLed = frame; }
+      else if (frame & FRAME_TYPE::BUTTON) { dbgButton++; dbgLastButton = frame; }
+      else if (frame != 0) dbgOther++;
+      state.frameCounter++;
+    }
+    else
+    {
+      dbgSpiLenOther++;
+    }
+    spi_slave_queue_trans(SBH_SPI_HOST, done, portMAX_DELAY); // re-arm
   }
 }
 
@@ -656,9 +717,10 @@ void SBH20IO::clockRisingISR(void *arg)
 
 void SBH20IO::logDebug()
 {
-  ESP_LOGD("sbh20dbg", "isrCalls=%u latch=%u | cue=%u digit=%u led=%u btn=%u other=%u | lastLED=0x%04X lastDIGIT=0x%04X",
-           dbgIsrCalls, dbgLatchCalls, dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther, dbgLastLed, dbgLastDigit);
-  dbgIsrCalls = dbgLatchCalls = 0;
+  ESP_LOGD("sbh20dbg", "spiTot=%u len16=%u lenX=%u lastLen=%u lastRaw=0x%04X | cue=%u dig=%u led=%u btn=%u oth=%u | LED=0x%04X DIG=0x%04X",
+           dbgSpiTotal, dbgSpiLen16, dbgSpiLenOther, dbgLastLen, dbgLastRaw,
+           dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther, dbgLastLed, dbgLastDigit);
+  dbgSpiTotal = dbgSpiLen16 = dbgSpiLenOther = 0;
   dbgCue = dbgDigit = dbgLed = dbgButton = dbgOther = 0;
 }
 

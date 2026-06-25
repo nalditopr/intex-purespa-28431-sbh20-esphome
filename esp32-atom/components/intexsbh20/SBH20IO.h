@@ -169,6 +169,7 @@ private:
   // ISR and ISR helper
   static void latchFallingISR(void *arg);
   static void clockRisingISR(void *arg);
+  static void spiTask(void *arg);
   static inline uint8_t BCD(uint16_t value);
   static inline void decodeDisplay(uint16_t frame);
   static inline void decodeLED(uint16_t frame);
@@ -203,6 +204,8 @@ private:
   static volatile uint16_t frameBufHead;
   static volatile uint16_t frameBufTail;
   static volatile uint32_t dbgIsrCalls, dbgLatchCalls;
+  static volatile uint32_t dbgSpiTotal, dbgSpiLen16, dbgSpiLenOther, dbgLastLen;
+  static volatile uint16_t dbgLastRaw;
 
 private:
   uint16_t convertDisplayToCelsius(uint16_t value) const;
