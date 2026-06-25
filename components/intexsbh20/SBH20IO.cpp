@@ -28,6 +28,7 @@
 #include "driver/spi_slave.h"
 #include "soc/spi_periph.h"
 #include "esp_rom_gpio.h"
+#include "esp_timer.h"
 #include "esphome/core/log.h"
 
 // bit mask for LEDs
@@ -218,11 +219,7 @@ volatile uint32_t SBH20IO::dbgMaxLen = 0;
 volatile uint16_t SBH20IO::dbgWord0 = 0;
 volatile uint16_t SBH20IO::dbgWord1 = 0;
 
-// ---- ESP32 SPI-slave hardware capture buffers (Stage 1: log-only) ----
-#define SBH_SPI_HOST SPI3_HOST
-static const int SBH_QUEUE = 8;
-static WORD_ALIGNED_ATTR uint8_t s_spiRx[SBH_QUEUE][32];
-static spi_slave_transaction_t s_spiTrans[SBH_QUEUE];
+// (SPI-slave capture buffers removed — using the GPIO logic-analyzer probe below instead.)
 
 // ESP32 fast GPIO helpers (require GPIO < 32)
 inline bool SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
@@ -264,81 +261,59 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_spi", 4096, nullptr, 12, nullptr, 1);
 }
 
-// ESP32 SPI-slave capture task (Stage 1: log-only — classify words, no decode wired yet).
-// CLK->SCLK, DATA->MOSI, LATCH->CS(active-low), mode 3, MSB-first; each CS-low period
-// clocks one 16-bit word into DMA. The protocol inverts the data bits, so frame = ~raw.
+// ESP32-as-logic-analyzer: tight-poll CLK/DATA/LATCH to reverse-engineer the true waveform.
+// (Diagnostic — replaces the SPI capture while we determine the real protocol timing.)
+static uint8_t s_la[20000];
 void SBH20IO::spiTask(void *arg)
 {
-  spi_bus_config_t bus = {};
-  bus.mosi_io_num = pinData;
-  bus.miso_io_num = -1;
-  bus.sclk_io_num = pinClock;
-  bus.quadwp_io_num = -1;
-  bus.quadhd_io_num = -1;
-  bus.max_transfer_sz = 4;
+  const int N = (int) sizeof(s_la);
+  const uint32_t cm = (uint32_t) 1 << pinClock;
+  const uint32_t dm = (uint32_t) 1 << pinData;
+  const uint32_t lm = (uint32_t) 1 << pinLatch;
+  portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
-  spi_slave_interface_config_t slv = {};
-  slv.spics_io_num = pinLatch;
-  slv.flags = 0;   // MSB-first
-  slv.queue_size = SBH_QUEUE;
-  slv.mode = 3;    // CPOL=1, CPHA=1
-  slv.post_setup_cb = nullptr;
-  slv.post_trans_cb = nullptr;
+  vTaskDelay(3000 / portTICK_PERIOD_MS); // let WiFi settle before the first capture
 
-  esp_err_t err = spi_slave_initialize(SBH_SPI_HOST, &bus, &slv, SPI_DMA_CH_AUTO);
-  if (err != ESP_OK)
-  {
-    ESP_LOGE("sbh20spi", "spi_slave_initialize failed: %d", (int) err);
-    vTaskDelete(nullptr);
-    return;
-  }
-  ESP_LOGI("sbh20spi", "SPI slave capture started (SCLK=%u MOSI=%u CS=%u)", pinClock, pinData, pinLatch);
-
-  // PROBE: active-low CS captured only ~1 bit/CS, so the data is clocked while LATCH is
-  // HIGH. Invert the CS input so the transaction is active during the LATCH-high window.
-  // Generous 256-bit length so trans_len reveals the true bits-per-window.
-  esp_rom_gpio_connect_in_signal(pinLatch, spi_periph_signal[SBH_SPI_HOST].spics_in, true);
-
-  for (int i = 0; i < SBH_QUEUE; i++)
-  {
-    s_spiTrans[i] = {};
-    s_spiTrans[i].length = 256; // bits (generous probe window)
-    s_spiTrans[i].tx_buffer = nullptr;
-    s_spiTrans[i].rx_buffer = s_spiRx[i];
-    spi_slave_queue_trans(SBH_SPI_HOST, &s_spiTrans[i], portMAX_DELAY);
-  }
-
-  spi_slave_transaction_t *done;
   for (;;)
   {
-    if (spi_slave_get_trans_result(SBH_SPI_HOST, &done, portMAX_DELAY) != ESP_OK)
-      continue;
-    dbgSpiTotal++;
-    uint32_t len = done->trans_len; // bits clocked while CS (LATCH, now inverted) was active
-    dbgLastLen = len;
-    if (len > dbgMaxLen) dbgMaxLen = len;
-    if (len >= 8)
+    int64_t t0 = esp_timer_get_time();
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < N; i++)
     {
-      uint8_t *b = (uint8_t *) done->rx_buffer;
-      uint16_t w0 = (uint16_t) ~(((uint16_t) b[0] << 8) | b[1]); // first 16 bits, inverted
-      uint16_t w1 = (uint16_t) ~(((uint16_t) b[2] << 8) | b[3]); // next 16 bits, inverted
-      dbgWord0 = w0;
-      dbgWord1 = w1;
-      dbgLastRaw = (uint16_t)(((uint16_t) b[0] << 8) | b[1]);
-      uint16_t frame = w0; // classify the first word as if it were a 16-bit frame
-      if (frame == FRAME_TYPE::CUE) dbgCue++;
-      else if (frame & FRAME_TYPE::DIGIT) { dbgDigit++; dbgLastDigit = frame; }
-      else if (frame & FRAME_TYPE::LED) { dbgLed++; dbgLastLed = frame; }
-      else if (frame & FRAME_TYPE::BUTTON) { dbgButton++; dbgLastButton = frame; }
-      else if (frame != 0) dbgOther++;
-      if (len == 16) dbgSpiLen16++; else dbgSpiLenOther++;
-      state.frameCounter++;
+      uint32_t g = REG_READ(GPIO_IN_REG);
+      s_la[i] = (uint8_t)(((g & cm) ? 1 : 0) | ((g & dm) ? 2 : 0) | ((g & lm) ? 4 : 0));
     }
-    else
+    portEXIT_CRITICAL(&mux);
+    int64_t t1 = esp_timer_get_time();
+
+    double us = (double)(t1 - t0);
+    double rateMHz = us > 0 ? (double) N / us : 0;
+
+    int clkRise = 0, latchRise = 0, latchFall = 0, clkHi = 0, clkLo = 0;
+    int lastRiseIdx = -1, sumPer = 0, perCount = 0;
+    uint16_t word = 0; int wbits = 0; uint16_t firstWord = 0; bool gotWord = false;
+    for (int i = 1; i < N; i++)
     {
-      dbgSpiLenOther++;
+      uint8_t s = s_la[i], p = s_la[i - 1];
+      if ((s & 4) && !(p & 4)) latchRise++;
+      if (!(s & 4) && (p & 4)) latchFall++;
+      if ((s & 1) && !(p & 1)) // clock rising edge
+      {
+        clkRise++;
+        if (s & 4) clkHi++; else clkLo++;
+        if (lastRiseIdx >= 0) { sumPer += (i - lastRiseIdx); perCount++; }
+        lastRiseIdx = i;
+        if (wbits < 16) { word = (uint16_t)((word << 1) | ((s & 2) ? 0 : 1)); if (++wbits == 16 && !gotWord) { firstWord = word; gotWord = true; } }
+      }
     }
-    spi_slave_queue_trans(SBH_SPI_HOST, done, portMAX_DELAY); // re-arm
+    double winUs = rateMHz > 0 ? (double) N / rateMHz : 0;
+    int avgPerNs = (perCount && rateMHz > 0) ? (int)(((double) sumPer / perCount) / rateMHz * 1000.0) : 0;
+    int clkKHz = winUs > 0 ? (int)((double) clkRise / winUs * 1000.0) : 0;
+    int latchHz = winUs > 0 ? (int)((double) latchRise / winUs * 1e6) : 0;
+
+    ESP_LOGI("sbh20la", "rate=%.1fMHz win=%.0fus | clk=%dkHz rises=%d hi=%d lo=%d perAvg=%dns | latch=%dHz rise=%d fall=%d | word0=0x%04X",
+             rateMHz, winUs, clkKHz, clkRise, clkHi, clkLo, avgPerNs, latchHz, latchRise, latchFall, firstWord);
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
   }
 }
 
