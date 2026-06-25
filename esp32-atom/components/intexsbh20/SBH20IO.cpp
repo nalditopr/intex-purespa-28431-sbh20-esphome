@@ -323,38 +323,67 @@ void SBH20IO::spiTask(void *arg)
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
+  // --- DIAGNOSTIC: sample-offset sweep ---------------------------------------------
+  // The first 1-2 bits of each frame read wrong (0x8000 / 0x4000 contamination), so the
+  // data line isn't settled at whatever instant we sample. Rather than keep guessing the
+  // edge, sample each bit at +0..+4 us after the clock rising edge, rebuild the 16-bit
+  // frame for every offset, and count how many come out as clean LED frames (LED marker
+  // 0x4000 set, no bits outside the valid LED mask). The offset with the most clean LED
+  // frames is the correct sample instant.
   const uint32_t clk = (uint32_t)1 << pinClock;
-  const uint32_t lat = (uint32_t)1 << pinLatch;
+  const uint32_t dm = (uint32_t)1 << pinData;
+  const uint32_t lm = (uint32_t)1 << pinLatch;
+  const uint16_t LEDMASK = 0x4000 | 0x1000 | 0x0400 | 0x0200 | 0x0100 | 0x0080 | 0x0001; // 0x5781
 
   for (;;)
   {
-    int64_t t0 = esp_timer_get_time();
-    uint32_t g = REG_READ(GPIO_IN_REG);
-    uint32_t prevClk = g & clk;
-    uint32_t prevLat = g & lat;
-    uint32_t iter = 0;
+    uint32_t cleanLed[5] = {0, 0, 0, 0, 0};
+    uint16_t example[5] = {0, 0, 0, 0, 0};
+    int frames = 0;
+    int64_t cap0 = esp_timer_get_time();
 
-    // tight capture burst: detect clock-rising + latch-falling edges and decode
-    for (;;)
+    while (frames < 80 && (esp_timer_get_time() - cap0) < 120000)
     {
-      g = REG_READ(GPIO_IN_REG);
-      uint32_t curClk = g & clk;
-      uint32_t curLat = g & lat;
-      // Sample on the clock FALLING edge. Data is set up at the rising edge but the line
-      // is slow (RC through the 470 ohm + BSS138), so reading it the instant the clock
-      // rises catches it mid-transition -> wrong bits. The falling edge is ~half a bit
-      // later, after the data line has settled (this is what the D1-mini's interrupt
-      // latency did for free). The bit value is unchanged; only the sample instant moves.
-      if (!curClk && prevClk) clockRisingISR(nullptr);   // sample + accumulate one bit
-      if (!curLat && prevLat) latchFallingISR(nullptr);  // release DATA after a button TX
-      prevClk = curClk;
-      prevLat = curLat;
-      // burst > one 21 ms display cycle so all 4 digit positions arrive within a single
-      // uninterrupted burst (the display assembly needs them consecutive)
-      if (((++iter) & 0x3FF) == 0 && (esp_timer_get_time() - t0) >= 24000) break;
+      // align to a frame: wait for latch HIGH (idle gap) then LOW (frame start)
+      int64_t w = esp_timer_get_time();
+      while (!(REG_READ(GPIO_IN_REG) & lm)) { if (esp_timer_get_time() - w > 5000) break; }
+      while ((REG_READ(GPIO_IN_REG) & lm)) { if (esp_timer_get_time() - w > 12000) break; }
+
+      uint16_t fr[5] = {0, 0, 0, 0, 0};
+      int nb = 0;
+      uint32_t prevClk = REG_READ(GPIO_IN_REG) & clk;
+      int64_t fstart = esp_timer_get_time();
+      while (nb < 16)
+      {
+        uint32_t g = REG_READ(GPIO_IN_REG);
+        if (g & lm) break; // latch high -> frame ended
+        uint32_t cur = g & clk;
+        if (cur && !prevClk)
+        {
+          int64_t e = esp_timer_get_time();
+          for (int o = 0; o < 5; o++)
+          {
+            while ((esp_timer_get_time() - e) < o) { /* spin to +o us */ }
+            uint16_t bit = (REG_READ(GPIO_IN_REG) & dm) ? 0 : 1; // data is inverted
+            fr[o] = (uint16_t)((fr[o] << 1) | bit);
+          }
+          nb++;
+        }
+        prevClk = cur;
+        if ((esp_timer_get_time() - fstart) > 3000) break; // frame timeout
+      }
+      if (nb == 16)
+      {
+        for (int o = 0; o < 5; o++)
+          if ((fr[o] & 0x4000) && !(fr[o] & ~LEDMASK)) { cleanLed[o]++; example[o] = fr[o]; }
+        frames++;
+      }
     }
 
-    vTaskDelay(6 / portTICK_PERIOD_MS); // yield to loopTask + idle (feeds the WDT)
+    ESP_LOGI("ph", "=== %d frames; cleanLED count per sample offset after clock rising ===", frames);
+    for (int o = 0; o < 5; o++)
+      ESP_LOGI("ph", "  +%dus: cleanLED=%u  example=0x%04X", o, (unsigned) cleanLed[o], example[o]);
+    vTaskDelay(8000 / portTICK_PERIOD_MS);
   }
 }
 
