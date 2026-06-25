@@ -23,9 +23,9 @@ windows). How well a board hits that timing while running WiFi is the whole stor
 | Component | this repo's `intexsbh20` (ESP32 port of piitaya) | [`piitaya/esphome-intexsbh20`](https://github.com/piitaya/esphome-intexsbh20) |
 | Guide | **→ [esp32-atom/](esp32-atom/)** | this page (below) |
 
-**Use the ESP32 / Atom Lite build** unless you specifically want the ESP8266 — the
-second core solves the timing-reliability problem that makes button presses flaky on
-the '8266. Both share the same BSS138 wiring and the same spa-side tap; only the
+**Use the ESP32 / Atom Lite build** (validated on a 28431E PureSpa Plus — temperature
+plus all controls) unless you specifically want the ESP8266 — the second core solves the
+timing-reliability problem that makes button presses flaky on the '8266. Both share the same BSS138 wiring and the same spa-side tap; only the
 controller and a couple of details differ. (The Raspberry Pi Pico W is a third option
 — [`RealByron/PicoW-Intex-PureSpa`](https://github.com/RealByron/PicoW-Intex-PureSpa)
 — which offloads timing to PIO.)

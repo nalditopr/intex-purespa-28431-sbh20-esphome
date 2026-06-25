@@ -1,36 +1,71 @@
-# ESP32 (M5Stack Atom Lite) port — EXPERIMENTAL
+# ESP32 (M5Stack Atom Lite) port
 
 An ESP32 port of the `intexsbh20` ESPHome component, targeting the **M5Stack Atom
-Lite** (ESP32-PICO-D4). This is the first ESP32-native firmware for the SB-H20
-panel — the upstream components are ESP8266 (`piitaya`) or RP2040/Pico W
-(`RealByron`) only.
+Lite** (ESP32-PICO-D4). The upstream components are ESP8266 (`piitaya`) or
+RP2040/Pico W (`RealByron`) only — this is an ESP32-native firmware for the SB-H20
+panel.
 
-> ⚠️ **Status: experimental — not yet hardware-validated.** The code compiles
-> against the logic of the proven ESP8266 component but has **not** been run on a
-> real spa yet. Test on the bench/at the spa before trusting it. Findings and
-> fixes welcome.
+> ✅ **Status: working — validated on a real Intex 28431E PureSpa Plus (SB-H20).**
+> Water temperature reads correctly and every control works from Home Assistant:
+> Power, Heater, Bubble, Filter, and temperature Up/Down (setpoint read **and** change).
 
 ![SB-H20 to BSS138 to M5Stack Atom Lite wiring diagram](wiring/atom-wiring.png)
 
 > Open `wiring/atom-wiring.html` for the same diagram interactively.
 
-## Build validation status
+## Why ESP32 here
 
-| Check | Result |
-|-------|--------|
-| Host unit tests (`test/test_decode.cpp`, decode math) | ✅ 41/41 pass (g++) |
-| `esphome config` (schema / pins / codegen) | ✅ valid |
-| Compile all component sources on the ESP32 toolchain | ✅ **zero errors** — `SBH20IO.cpp`, `SBHClimate.cpp`, `intexsbh20.cpp` all build clean against the real ESP32 SDK (register macros, FreeRTOS, Arduino HAL, ESPHome APIs all resolve) |
-| Produce a flashable `firmware.bin` | ⏳ not yet — pending a build on a clean toolchain install (see notes) |
+The SB-H20 is a continuous, latch-framed serial bus (~16-bit frames). Reading it reliably
+*while* running WiFi is the whole challenge. On the **ESP8266** a single core runs WiFi and
+the capture, so WiFi preempts the timing and button presses get missed — the well-known
+reliability issue.
 
-**Build it on your Home Assistant / ESPHome box**, where the platform installs
-cleanly. Two Windows-only gotchas if you build there:
-- An **accented character in the user path** (e.g. `C:\Users\José\…`) breaks the
-  xtensa linker (it truncates the path). Build from an ASCII path and set
-  `PLATFORMIO_CORE_DIR` to an ASCII location (or the 8.3 short name).
-- A flaky package mirror during first install can leave `framework-arduinoespressif32-libs`
-  as an empty stub (missing the WiFi/PHY blobs → `cannot find -lcore/-lphy/...`).
-  Re-run the platform install if you see that.
+The **ESP32 has two cores.** This port pins all bus capture to **core 1 (APP_CPU)** while
+ESPHome's WiFi runs on **core 0 (PRO_CPU)**, so WiFi can't disturb the receive/transmit
+timing — the same isolation the Pico W gets from PIO, on a cheaper, tinier, 5 V-friendly
+board.
+
+## How it works (capture architecture)
+
+1. **Auto-detects which pin is the clock.** At boot a core-1 task briefly measures both
+   signal pins; the clock has far more edges than data, so the **clock/data wiring order
+   doesn't matter** — only LATCH is fixed.
+2. **Interrupt-driven capture.** It then installs GPIO interrupts (clock-rising +
+   latch-falling) on core 1, exactly like the proven D1-mini build. A hardware interrupt
+   latches every clock edge regardless of CPU load, and releases the DATA line precisely
+   after a button reply — so transmitting a press never corrupts the frames being received.
+3. **Light decode in the ISR, heavy decode deferred.** LED/button frames decode in the
+   ISR; the 7-segment display decode runs in the main loop. Frames that don't form a
+   plausible value (a temperature, a blank, an error, or a valid LED word) are rejected,
+   which shrugs off the small amount of residual line noise.
+
+## Wiring (Atom Lite)
+
+All three signals must be on **GPIO < 32** (the fast path uses the 32-bit GPIO registers).
+
+- **LATCH → G23** (the per-frame strobe: idle-high with brief low pulses — see the
+  multimeter ID table in the [main README](../README.md)).
+- **CLOCK and DATA → G19 and G22, in *either* order** — the firmware auto-detects them.
+
+| Spa wire | Function | BSS138 | Atom Lite pin |
+|----------|----------|--------|---------------|
+| red\*    | +5 V  | HV  | **5V** |
+| green\*  | GND   | GND | **GND** |
+| signal   | CLK / DATA | HV1 ↔ LV1 | **G19** ┐ either order |
+| signal   | DATA / CLK | HV2 ↔ LV2 | **G22** ┘ (auto-detected) |
+| signal   | LATCH | HV3 ↔ LV3 | **G23** |
+
+\* *Wire colors vary by production batch — identify by function with a meter, don't trust
+the color. On the unit pictured, GND was green and +5 V was red; the three signal wires
+were white/blue, yellow and black.*
+
+- BSS138 **LV ← Atom 3V3**, **HV ← spa 5 V**. All grounds common.
+- Power the Atom from spa **5 V** (its 5V pin); its onboard regulator makes 3V3.
+- The ESP8266 build's **470 Ω series resistors are optional** here — G19/G22/G23 aren't
+  ESP32 strapping pins, so the boot back-power issue doesn't occur. Harmless to keep.
+
+`spa-atom.yaml` sets `clock_pin: 19`, `data_pin: 22`, `latch_pin: 23`. Because clock/data
+auto-detect, you can swap the first two freely; just keep latch on `latch_pin`.
 
 ## Power
 
@@ -39,78 +74,66 @@ Measured on the bench (Atom Lite, WiFi connected, `output_power: 12dB` +
 
 | State | Current @ 5 V |
 |-------|---------------|
-| Steady | **~66 mA** (0.05–0.07 A) |
+| Steady | **~66 mA** |
 | WiFi TX peaks | **~110–120 mA** |
 
-Light enough to run off the spa's 5 V tap with margin. **Fuse the 5 V line at
-~250 mA slow-blow** (≈2× the peak). A **10 µF** cap across the Atom 5V/GND smooths
-the TX spikes — nothing larger needed.
-
-## Why ESP32 makes sense here
-
-The SB-H20 button protocol is timing-critical (pull DATA low for ~2 µs after the
-latch edge). On the **ESP8266** the single core runs WiFi *and* the ISR, so WiFi
-preempts the timing and presses get missed — the well-known reliability issue.
-
-The **ESP32 has two cores.** This port installs the clock/latch ISRs from a task
-**pinned to core 1 (APP_CPU)**, while ESPHome's WiFi runs on **core 0 (PRO_CPU)**.
-WiFi can no longer preempt the receive/transmit timing — the same isolation the
-Pico W gets from PIO, but on a cheaper, tinier, 5 V-friendly board.
-
-## What changed vs. the ESP8266 component
-
-| Area | ESP8266 original | ESP32 port |
-|------|------------------|------------|
-| Pins | hard-coded GPIO 14/12/13 | configurable via YAML (`clock_pin`/`data_pin`/`latch_pin`) |
-| ISR reads | `digitalRead()` | direct `GPIO_IN_REG` (fast, IRAM) |
-| Button TX | `pinMode(DATA, OUTPUT/INPUT)` | `GPIO_ENABLE_W1TS/W1TC` (fast, IRAM) |
-| ISR core | (only core) | installed from a task **pinned to core 1** |
-| CPU clock | must force 160 MHz | n/a (240 MHz, core-isolated) |
-| Framework | — | **`arduino`** required (uses Arduino HAL) |
-
-Receive decoding, frame parsing, button logic, climate/switch/sensor entities are
-**unchanged** from `piitaya/esphome-intexsbh20`.
-
-## Wiring (Atom Lite)
-
-All three signals must be **GPIO < 32** (the fast ISR path uses the 32-bit GPIO
-registers). Defaults below.
-
-| Spa wire | Function | BSS138 | Atom Lite pin |
-|----------|----------|--------|---------------|
-| red    | +5 V  | HV  | **5V** |
-| green  | GND   | GND | **GND** |
-| white  | CLK   | HV1 ↔ LV1 | **G22** |
-| yellow | DATA  | HV2 ↔ LV2 | **G19** |
-| black  | LATCH | HV3 ↔ LV3 | **G23** |
-
-- BSS138 **LV ← Atom 3V3**, **HV ← spa 5 V**. All grounds common.
-- Power the Atom from spa **5 V** (its 5V pin); its regulator makes 3V3.
-- The ESP8266 build's **470 Ω series resistors are optional here** — G19/G22/G23
-  are not ESP32 strapping pins, so the boot back-power issue shouldn't occur.
-  Harmless to keep as insurance.
+Light enough to run off the spa's 5 V tap with margin. **Fuse the 5 V line at ~250 mA
+slow-blow** (≈2× the peak). A **10 µF** cap across the Atom 5V/GND smooths the TX spikes.
 
 ## Build / flash
 
 1. Copy your `secrets.yaml` (wifi + api_key + ota_password) next to `spa-atom.yaml`.
 2. `esphome run spa-atom.yaml` (first compile pulls the ESP32 toolchain).
-3. Flash over USB-C, confirm WiFi + entities, then wire to the spa (5 V, USB out).
+3. Flash over USB-C, confirm WiFi + entities, then wire to the spa (5 V — **don't** power
+   USB and the spa at the same time). Updates after that go over OTA.
 
-## Known caveats / TODO (validate on hardware)
+**Build on your Home Assistant / ESPHome box**, where the platform installs cleanly. Two
+Windows gotchas if you build there:
+- An **accented character in the user path** (e.g. `C:\Users\José\…`) breaks the xtensa
+  linker (it truncates the path). Build from an ASCII path / set `PLATFORMIO_CORE_DIR` to one.
+- A flaky package mirror on first install can leave `framework-arduinoespressif32-libs` an
+  empty stub (missing WiFi/PHY blobs → `cannot find -lcore/-lphy/...`). Re-run the platform
+  install if you see that.
 
-- **Untested on a real spa.** Confirm `water_temperature` decodes and buttons act.
-- `framework: arduino` is required (the component uses `attachInterruptArg`,
-  `pinMode`, `REG_READ/REG_WRITE`). An esp-idf variant would need rework.
-- Button methods block the main loop (inherited from upstream). On ESP32 watch for
-  "component took a long time" warnings; if they appear, move the press loop to the
-  pinned task.
-- Pins are constrained to GPIO 0–31. The Atom exposes G19/21/22/23/25 (+ Grove
-  G26/G32) — all fine.
-- Verify the DATA idle/pull-up behaviour: DATA must idle HIGH via the bus pull-up
-  when the ESP releases it.
+## What changed vs. the ESP8266 component
+
+| Area | ESP8266 original | ESP32 port |
+|------|------------------|------------|
+| Pins | hard-coded GPIO 14/12/13 | YAML `clock_pin`/`data_pin`/`latch_pin`; **clock/data auto-detected** |
+| GPIO access | `digitalRead()` | direct `GPIO_IN_REG` / `GPIO_ENABLE_W1TS/W1TC` |
+| Capture core | the only core | GPIO ISRs installed from a task **pinned to core 1** |
+| CPU clock | must force 160 MHz | n/a (240 MHz, core-isolated) |
+| Setpoint read | blocking | **non-blocking** (a blocking read stalled the loop and dropped the HA API) |
+| Framework | — | **`arduino`** required |
+
+Receive decoding, frame parsing, button logic and the climate/switch/sensor entities are
+otherwise the proven `piitaya/esphome-intexsbh20` logic.
+
+## Build validation status
+
+| Check | Result |
+|-------|--------|
+| Host unit tests (`test/test_decode.cpp`, decode math) | ✅ pass (g++) |
+| `esphome config` (schema / pins / codegen) | ✅ valid |
+| Compile on the ESP32 toolchain | ✅ zero errors |
+| Flashable `firmware.bin` | ✅ builds + flashes (HA/ESPHome box) |
+| **Runs on a real spa** | ✅ temp + all controls on an Intex 28431E PureSpa Plus |
+
+## Notes / limitations
+
+- Diagnostics log at **VERBOSE** level — set the logger to `VERBOSE` to see frame/decode
+  stats; normal logs stay quiet.
+- A *manually* toggled control still blocks the loop briefly while it waits for the panel's
+  ack; if the device ever blips to "unavailable" right when you tap a control, that's why.
+  The **automatic** setpoint read (which used to stall the loop every 30 s and drop the
+  API) is non-blocking.
+- `framework: arduino` is required (`attachInterruptArg`, `pinMode`, `REG_READ/WRITE`); an
+  esp-idf variant would need rework.
+- Pins are constrained to GPIO 0–31. The Atom exposes G19/21/22/23/25 (+ Grove G26/G32) —
+  all fine.
 
 ## License
 
 The `SBH20IO.*` receive code is derived from DIYSCIP and is licensed
 **CC-BY-NC-SA-4.0** (non-commercial). The rest follows the upstream
-`piitaya/esphome-intexsbh20` (Apache-2.0). See file headers.
+`piitaya/esphome-intexsbh20`. See file headers.
