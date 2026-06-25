@@ -261,61 +261,75 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_spi", 4096, nullptr, 12, nullptr, 1);
 }
 
-// ESP32 waveform recorder: capture the real CLK/DATA/LATCH transition timing and dump it,
-// so we can read this spa's exact framing instead of inferring it. (Diagnostic.)
-static const int WF_MAX = 200;
-static uint32_t s_wfT[WF_MAX];
-static uint8_t s_wfS[WF_MAX];
+// ESP32 pin-role scanner: the previous waveform dump proved (a) the latch line never
+// goes low on G23, and (b) the clock/data labels are swapped (G19 carries the real
+// ~140 kHz clock, G22 the held data). The frame-enable (latch) signal — which must go
+// LOW for ~100 us per 16-bit frame — appeared on NONE of G19/G22/G23. This scanner
+// samples ALL of the Atom Lite's broken-out pins for 50 ms and reports each pin's
+// signature so we can map wire -> role directly:
+//   CLOCK = highest transition count   DATA = moderate transitions, mostly idle-high
+//   LATCH = the pin with periodic ~50-120 us LOW pulses (maxLowUs)
+//   disconnected = trans=0 (duty 0% or 100%)
 void SBH20IO::spiTask(void *arg)
 {
-  const uint32_t cm = (uint32_t) 1 << pinClock;
-  const uint32_t dm = (uint32_t) 1 << pinData;
-  const uint32_t lm = (uint32_t) 1 << pinLatch;
+  static const int NP = 8;
+  static const uint8_t pins[NP] = {19, 21, 22, 23, 25, 26, 32, 33};
+
+  for (int i = 0; i < NP; i++) pinMode(pins[i], INPUT); // ensure input path enabled
 
   vTaskDelay(3000 / portTICK_PERIOD_MS); // let WiFi settle
 
   for (;;)
   {
-    // record transitions (no critical section: window is ~ms, occasional gaps are fine)
-    int n = 0;
-    uint32_t iter = 0;
-    int64_t start = esp_timer_get_time();
-    uint32_t g0 = REG_READ(GPIO_IN_REG);
-    uint8_t prev = (uint8_t)(((g0 & cm) ? 1 : 0) | ((g0 & dm) ? 2 : 0) | ((g0 & lm) ? 4 : 0));
-    while (n < WF_MAX)
-    {
-      uint32_t g = REG_READ(GPIO_IN_REG);
-      uint8_t s = (uint8_t)(((g & cm) ? 1 : 0) | ((g & dm) ? 2 : 0) | ((g & lm) ? 4 : 0));
-      if (s != prev)
-      {
-        s_wfT[n] = (uint32_t)(esp_timer_get_time() - start);
-        s_wfS[n] = s;
-        n++;
-        prev = s;
-      }
-      if ((((++iter) & 0x3FF) == 0) && (esp_timer_get_time() - start) > 300000) break; // 300ms cap
-    }
-    int64_t dur = esp_timer_get_time() - start;
+    uint32_t trans[NP] = {0};
+    uint32_t highSamp[NP] = {0};
+    uint32_t maxLow[NP] = {0};   // longest continuous LOW run (us) -> latch finder
+    uint32_t lowStart[NP] = {0};
+    uint8_t prev[NP];
+    uint32_t samples = 0;
 
-    ESP_LOGI("wf", "=== %d transitions in %dus (dtUs:CDL  C=clk D=data L=latch) ===", n, (int) dur);
-    char line[210];
-    int pos = 0, per = 0;
-    uint32_t prevT = 0;
-    for (int i = 0; i < n; i++)
+    int64_t t0 = esp_timer_get_time();
+    uint32_t r0 = REG_READ(GPIO_IN_REG), r1 = REG_READ(GPIO_IN1_REG);
+    for (int i = 0; i < NP; i++)
     {
-      uint32_t dt = s_wfT[i] - prevT;
-      prevT = s_wfT[i];
-      uint8_t s = s_wfS[i];
-      pos += snprintf(line + pos, sizeof(line) - pos, "%u:%d%d%d ", (unsigned) dt, s & 1, (s >> 1) & 1, (s >> 2) & 1);
-      if (++per >= 10 || i == n - 1)
+      uint8_t p = pins[i];
+      prev[i] = (p < 32) ? ((r0 >> p) & 1) : ((r1 >> (p - 32)) & 1);
+      lowStart[i] = 0;
+    }
+
+    int64_t now;
+    while ((now = esp_timer_get_time()) - t0 < 50000) // 50 ms window (~2.4 frame cycles)
+    {
+      uint32_t a = REG_READ(GPIO_IN_REG), b = REG_READ(GPIO_IN1_REG);
+      uint32_t us = (uint32_t)(now - t0);
+      samples++;
+      for (int i = 0; i < NP; i++)
       {
-        ESP_LOGI("wf", "%s", line);
-        pos = 0;
-        per = 0;
-        vTaskDelay(1); // let the logger flush
+        uint8_t p = pins[i];
+        uint8_t v = (p < 32) ? ((a >> p) & 1) : ((b >> (p - 32)) & 1);
+        if (v) highSamp[i]++;
+        if (v != prev[i])
+        {
+          trans[i]++;
+          if (v) { uint32_t d = us - lowStart[i]; if (d > maxLow[i]) maxLow[i] = d; }
+          else   { lowStart[i] = us; }
+          prev[i] = v;
+        }
       }
     }
-    vTaskDelay(12000 / portTICK_PERIOD_MS);
+
+    ESP_LOGI("scan", "=== %u samples / 50ms (%u ns/sample)  CLOCK=most trans, LATCH=big maxLowUs ===",
+             (unsigned) samples, (unsigned)(50000000ULL / (samples ? samples : 1)));
+    for (int i = 0; i < NP; i++)
+    {
+      ESP_LOGI("scan", "G%-2u trans=%-6u duty=%3u%%  maxLowUs=%-5u %s",
+               pins[i], (unsigned) trans[i],
+               (unsigned)(100ULL * highSamp[i] / (samples ? samples : 1)),
+               (unsigned) maxLow[i],
+               trans[i] == 0 ? "(idle/disconnected)" : "");
+      vTaskDelay(1); // let the logger flush
+    }
+    vTaskDelay(8000 / portTICK_PERIOD_MS);
   }
 }
 
