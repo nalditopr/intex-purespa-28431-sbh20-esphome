@@ -34,8 +34,8 @@ public:
 	void set_water_temperature_sensor(esphome::sensor::Sensor* temperature) { water_temperature_ = temperature; };
 private:
 	SBH20IO sbh_;
-	uint8_t clock_pin_ = 22;
-	uint8_t data_pin_ = 19;
+	uint8_t clock_pin_ = 19;
+	uint8_t data_pin_ = 22;
 	uint8_t latch_pin_ = 23;
 	SBHClimate* climate_ = nullptr;
 	SBHSwitch* switch_power_ = nullptr;

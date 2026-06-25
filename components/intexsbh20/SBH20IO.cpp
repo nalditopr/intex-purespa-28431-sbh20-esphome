@@ -356,10 +356,15 @@ void SBH20IO::loop()
 {
   processFrames();
 
-  // device online check
+  // Online = still receiving frames from the panel. (The original keyed this off state
+  // *changes*, so the device flapped to offline whenever the spa sat idle with a steady
+  // display. Track the frame counter instead, so a steady-but-live bus stays online and
+  // we only go offline when frames actually stop.)
+  static unsigned int lastFrameCount = 0;
   unsigned long now = millis();
-  if (state.stateUpdated)
+  if (state.stateUpdated || state.frameCounter != lastFrameCount)
   {
+    lastFrameCount = state.frameCounter;
     lastStateUpdateTime = now;
     state.online = true;
     state.stateUpdated = false;
@@ -397,7 +402,18 @@ int SBH20IO::getTargetTemperature() const
 
 void SBH20IO::forceReadTargetTemperature()
 {
-  changeTargetTemperature(-1);
+  // Non-blocking setpoint read: queue a single "down" press and return immediately. The
+  // ISR transmits it over the next button-poll telegrams and decodeDisplay captures the
+  // setpoint the panel briefly reveals (the first down press only reveals it, it does not
+  // change it). The old path called changeTargetTemperature(), which BLOCKED the ESPHome
+  // loop ~2 s waiting for a buzzer ACK -- that stalled the API and made Home Assistant
+  // mark the whole device "unavailable"/unknown, and it repeated every 30 s while the
+  // target was unknown. The caller's 30 s backoff is far longer than the panel's setpoint
+  // display timeout, so each retry is a fresh reveal (never an accidental decrement).
+  if (isPowerOn() == true && state.error == ERROR::NONE && !state.buzzer)
+  {
+    buttons.toggleTempDown = BUTTON::PRESS_COUNT;
+  }
 }
 
 unsigned int SBH20IO::getErrorValue() const
@@ -736,11 +752,11 @@ void SBH20IO::clockRisingISR(void *arg)
 
 void SBH20IO::logDebug()
 {
-  ESP_LOGD("sbh20dbg", "clkISR=%u latchISR=%u frames=%u | cue=%u dig=%u led=%u btn=%u oth=%u | lastLed=0x%04X lastDigit=0x%04X lastBtn=0x%04X",
+  ESP_LOGV("sbh20dbg", "clkISR=%u latchISR=%u frames=%u | cue=%u dig=%u led=%u btn=%u oth=%u | lastLed=0x%04X lastDigit=0x%04X lastBtn=0x%04X",
            dbgIsrCalls, dbgLatchCalls, state.frameCounter,
            dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther,
            dbgLastLed, dbgLastDigit, dbgLastButton);
-  ESP_LOGD("sbh20dbg", "disp: assembled=0x%04X stable=0x%04X stableTemp=0x%04X changes=%u replies=%u | curTemp=0x%04X targetTemp=0x%04X",
+  ESP_LOGV("sbh20dbg", "disp: assembled=0x%04X stable=0x%04X stableTemp=0x%04X changes=%u replies=%u | curTemp=0x%04X targetTemp=0x%04X",
            g_dbgDisp, g_dbgStable, g_dbgStableTemp, g_dbgChanges, g_dbgReplies, state.currentTemperature, state.targetTemperature);
   g_dbgChanges = 0;
   g_dbgReplies = 0;

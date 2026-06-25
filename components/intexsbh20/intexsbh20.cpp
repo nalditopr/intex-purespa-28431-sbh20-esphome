@@ -17,7 +17,7 @@ void IntexSBH20::loop()
 
 void IntexSBH20::update()
 {
-	ESP_LOGD("intexsbh20", "diag: frames=%u dropped=%u online=%d power=%u ledRaw=0x%04X",
+	ESP_LOGV("intexsbh20", "diag: frames=%u dropped=%u online=%d power=%u ledRaw=0x%04X",
 	         sbh_.getTotalFrames(), sbh_.getDroppedFrames(), (int) sbh_.isOnline(), sbh_.isPowerOn(), sbh_.getRawLedValue());
 
 	sbh_.logDebug();
