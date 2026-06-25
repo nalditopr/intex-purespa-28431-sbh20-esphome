@@ -200,6 +200,11 @@ volatile uint16_t SBH20IO::dbgLastLed = 0;
 volatile uint16_t SBH20IO::dbgLastDigit = 0;
 volatile uint16_t SBH20IO::dbgLastButton = 0;
 
+// deferred display-frame ring buffer (ISR producer, loop() consumer)
+volatile uint16_t SBH20IO::frameBuf[SBH20IO::FRAME_BUF_SIZE];
+volatile uint16_t SBH20IO::frameBufHead = 0;
+volatile uint16_t SBH20IO::frameBufTail = 0;
+
 // ESP32 fast GPIO helpers (require GPIO < 32)
 inline bool SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
 inline bool SBH20IO::readLatch() { return (REG_READ(GPIO_IN_REG) & maskLatch) != 0; }
@@ -261,8 +266,20 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   }
 }
 
+void SBH20IO::processFrames()
+{
+  while (frameBufTail != frameBufHead)
+  {
+    uint16_t f = frameBuf[frameBufTail];
+    frameBufTail = (uint16_t)((frameBufTail + 1) & FRAME_BUF_MASK);
+    decodeDisplay(f);
+  }
+}
+
 void SBH20IO::loop()
 {
+  processFrames();
+
   // device online check
   unsigned long now = millis();
   if (state.stateUpdated)
@@ -603,7 +620,10 @@ void SBH20IO::clockRisingISR(void *arg)
       else if (frame & FRAME_TYPE::DIGIT)
       {
         dbgDigit++; dbgLastDigit = frame;
-        decodeDisplay(frame);
+        // defer heavy display decode to loop() so the ISR stays short
+        uint16_t dnext = (uint16_t)((frameBufHead + 1) & FRAME_BUF_MASK);
+        if (dnext != frameBufTail) { frameBuf[frameBufHead] = frame; frameBufHead = dnext; }
+        else { state.frameDropped++; }
       }
       else if (frame & FRAME_TYPE::LED)
       {

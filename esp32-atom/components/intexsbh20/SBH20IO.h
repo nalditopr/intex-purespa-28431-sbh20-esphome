@@ -196,11 +196,19 @@ private:
   static volatile uint32_t dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther;
   static volatile uint16_t dbgLastLed, dbgLastDigit, dbgLastButton;
 
+  // deferred display-frame ring buffer (ISR producer, loop consumer)
+  static const uint16_t FRAME_BUF_SIZE = 128;
+  static const uint16_t FRAME_BUF_MASK = FRAME_BUF_SIZE - 1;
+  static volatile uint16_t frameBuf[FRAME_BUF_SIZE];
+  static volatile uint16_t frameBufHead;
+  static volatile uint16_t frameBufTail;
+
 private:
   uint16_t convertDisplayToCelsius(uint16_t value) const;
   bool waitBuzzerOff() const;
   bool pressButton(volatile unsigned int &buttonPressCount);
   bool changeTargetTemperature(int up);
+  void processFrames();
 
 private:
   LANG language;
