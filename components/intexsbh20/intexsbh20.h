@@ -4,7 +4,6 @@
 #include "esphome/core/component.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/sensor/sensor.h"
-#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "SBH20IO.h"
 
 namespace esphome {
@@ -33,7 +32,6 @@ public:
 	void set_switch_bubble(SBHSwitch* switch_bubble) { switch_bubble_ = switch_bubble; }
 	void set_error_text_sensor(esphome::text_sensor::TextSensor* error) { error_text_ = error; };
 	void set_water_temperature_sensor(esphome::sensor::Sensor* temperature) { water_temperature_ = temperature; };
-	void set_problem_binary_sensor(esphome::binary_sensor::BinarySensor* problem) { problem_ = problem; };
 private:
 	SBH20IO sbh_;
 	uint8_t clock_pin_ = 19;
@@ -45,7 +43,6 @@ private:
 	SBHSwitch* switch_bubble_ = nullptr;
 	esphome::text_sensor::TextSensor* error_text_ = nullptr;
 	esphome::sensor::Sensor* water_temperature_ = nullptr;
-	esphome::binary_sensor::BinarySensor* problem_ = nullptr;
 };
 
 }}

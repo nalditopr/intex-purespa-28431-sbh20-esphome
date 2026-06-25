@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, climate, sensor, switch, text_sensor
+from esphome.components import climate, sensor, switch, text_sensor
 from esphome.const import CONF_ID, PLATFORM_ESP32
 
 # ESP32 port: this component uses direct GPIO registers + a core-1 ISR, so it
@@ -9,9 +9,7 @@ ESP_PLATFORMS = [PLATFORM_ESP32]
 
 DEPENDENCIES = ['climate', 'sensor', 'switch', 'text_sensor']
 
-# binary_sensor is auto-loaded (not a hard dependency) so the optional "problem" entity
-# doesn't force users who don't want it to declare a bare binary_sensor: in their YAML.
-AUTO_LOAD = ['binary_sensor']
+AUTO_LOAD = []
 
 CONF_CLIMATE = 'climate'
 CONF_POWER = 'power'
@@ -19,7 +17,6 @@ CONF_FILTER = 'filter'
 CONF_BUBBLE = 'bubble'
 CONF_WATER_TEMPERATURE = 'water_temperature'
 CONF_ERROR_TEXT = 'error_text'
-CONF_PROBLEM = 'problem'
 
 CONF_CLOCK_PIN = 'clock_pin'
 CONF_DATA_PIN = 'data_pin'
@@ -50,7 +47,6 @@ CONFIG_SCHEMA = cv.polling_component_schema("5s").extend(
 		cv.Optional(CONF_BUBBLE): switch.switch_schema(SBHSwitch).extend(),
 		cv.Optional(CONF_WATER_TEMPERATURE): sensor.sensor_schema().extend(),
 		cv.Optional(CONF_ERROR_TEXT): text_sensor.text_sensor_schema().extend(),
-		cv.Optional(CONF_PROBLEM): binary_sensor.binary_sensor_schema(device_class='problem').extend(),
 	}
 )
 
@@ -84,10 +80,6 @@ async def to_code(config):
 	if CONF_ERROR_TEXT in config:
 		tx = await text_sensor.new_text_sensor(config[CONF_ERROR_TEXT])
 		cg.add(var.set_error_text_sensor(tx))
-
-	if CONF_PROBLEM in config:
-		bs = await binary_sensor.new_binary_sensor(config[CONF_PROBLEM])
-		cg.add(var.set_problem_binary_sensor(bs))
 
 	if CONF_WATER_TEMPERATURE in config:
 		tx = await sensor.new_sensor(config[CONF_WATER_TEMPERATURE])
