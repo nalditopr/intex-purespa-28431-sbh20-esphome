@@ -340,7 +340,12 @@ void SBH20IO::spiTask(void *arg)
       g = REG_READ(GPIO_IN_REG);
       uint32_t curClk = g & clk;
       uint32_t curLat = g & lat;
-      if (curClk && !prevClk) clockRisingISR(nullptr);   // sample + accumulate one bit
+      // Sample on the clock FALLING edge. Data is set up at the rising edge but the line
+      // is slow (RC through the 470 ohm + BSS138), so reading it the instant the clock
+      // rises catches it mid-transition -> wrong bits. The falling edge is ~half a bit
+      // later, after the data line has settled (this is what the D1-mini's interrupt
+      // latency did for free). The bit value is unchanged; only the sample instant moves.
+      if (!curClk && prevClk) clockRisingISR(nullptr);   // sample + accumulate one bit
       if (!curLat && prevLat) latchFallingISR(nullptr);  // release DATA after a button TX
       prevClk = curClk;
       prevLat = curLat;
