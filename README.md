@@ -1,18 +1,40 @@
-# Intex PureSpa SB-H20 → ESPHome (ESP8266 / Wemos D1 mini)
+# Intex PureSpa SB-H20 → ESPHome (ESP32 or ESP8266)
 
 WiFi + Home Assistant control for the **Intex PureSpa** with the **SB-H20** control
-panel (the older, non-WiFi pump) using a **Wemos D1 mini (ESP8266)**, a **BSS138
-level shifter**, and the
-[`piitaya/esphome-intexsbh20`](https://github.com/piitaya/esphome-intexsbh20)
-external component.
+panel (the older, non-WiFi pump), via a **BSS138 level shifter** tapping the ribbon
+between the control panel and the mainboard — no board replacement, no soldering on
+the spa itself.
 
 > **Tested on:** Intex **28431E PureSpa Plus** (SB-H20 panel). The SB-H20 plug/pinout
 > is shared with the SSP and SJB models, so this should also apply to SimpleSpa SB-B20,
 > SSP-H-20-1, and SJB-HS.
 
-This repo is a build log + known-good wiring for that combination, including the
-gotchas that took a while to find. It taps the ribbon between the control panel
-and the mainboard — no replacement board, no soldering on the spa itself.
+## Two build options
+
+The SB-H20 button protocol is timing-critical (the panel pulls DATA low for ~2&nbsp;µs
+windows). How well a board hits that timing while running WiFi is the whole story:
+
+| | **ESP32 / M5Stack Atom Lite** ⭐ recommended | **ESP8266 / Wemos D1 mini** |
+|---|---|---|
+| Button timing | ISRs pinned to **core 1**, WiFi on core 0 → can't be preempted | single core — WiFi can disrupt the 2&nbsp;µs pulse (occasional missed presses) |
+| CPU tweak | none | must force **160&nbsp;MHz** |
+| Boot quirk | none on G19/22/23 | needs **470&nbsp;Ω** series resistors to boot with cables attached |
+| Measured power | ~66&nbsp;mA / ~120&nbsp;mA peak | ~20–100&nbsp;mA |
+| Component | this repo's `intexsbh20` (ESP32 port of piitaya) | [`piitaya/esphome-intexsbh20`](https://github.com/piitaya/esphome-intexsbh20) |
+| Guide | **→ [esp32-atom/](esp32-atom/)** | this page (below) |
+
+**Use the ESP32 / Atom Lite build** unless you specifically want the ESP8266 — the
+second core solves the timing-reliability problem that makes button presses flaky on
+the '8266. Both share the same BSS138 wiring and the same spa-side tap; only the
+controller and a couple of details differ. (The Raspberry Pi Pico W is a third option
+— [`RealByron/PicoW-Intex-PureSpa`](https://github.com/RealByron/PicoW-Intex-PureSpa)
+— which offloads timing to PIO.)
+
+### → ESP32 build (recommended): [esp32-atom/README.md](esp32-atom/README.md)
+
+The rest of this page is the **ESP8266 / Wemos D1 mini** build.
+
+---
 
 ![SB-H20 to BSS138 to D1 mini wiring diagram](wiring/sbh20-wiring.png)
 
@@ -22,18 +44,7 @@ and the mainboard — no replacement board, no soldering on the spa itself.
 
 ---
 
-## Why ESP8266 and not ESP32 / Pico
-
-The SB-H20 button protocol is timing-critical (the panel pulls DATA low for ~2&nbsp;µs
-windows, repeated until the mainboard acks). The ESPHome ecosystem for this panel is
-**ESP8266-only and must run at 160&nbsp;MHz** to hit that timing. ESP32 has no drop-in
-port (no PIO/equivalent wired up), and the Raspberry Pi Pico W version
-([`RealByron/PicoW-Intex-PureSpa`](https://github.com/RealByron/PicoW-Intex-PureSpa))
-offloads timing to PIO. For an SB-H20, a **$4 D1 mini is the path of least resistance.**
-
----
-
-## Bill of materials
+## Bill of materials (ESP8266 / D1 mini build)
 
 | Part | Notes |
 |------|-------|
