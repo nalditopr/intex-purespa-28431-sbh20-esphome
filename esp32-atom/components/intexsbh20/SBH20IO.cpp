@@ -184,6 +184,10 @@ inline bool displayIsTemp(uint16_t v) { return (v & 0x000F) == DIGIT::LET_C || (
 inline bool displayIsError(uint16_t v) { return (v & 0xF000) == 0xE000; }
 inline bool displayIsBlank(uint16_t v) { return (v & 0xFFF0) == ((DIGIT::OFF << 12) + (DIGIT::OFF << 8) + (DIGIT::OFF << 4)); }
 
+// diagnostic mirrors of decodeDisplay's internal state (read by logDebug)
+static volatile uint16_t g_dbgDisp = 0, g_dbgStable = 0, g_dbgStableTemp = 0;
+static volatile uint32_t g_dbgChanges = 0; // how often the assembled value flips (instability)
+
 volatile SBH20IO::State SBH20IO::state;
 volatile SBH20IO::Buttons SBH20IO::buttons;
 
@@ -323,67 +327,31 @@ void SBH20IO::spiTask(void *arg)
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
-  // --- DIAGNOSTIC: sample-offset sweep ---------------------------------------------
-  // The first 1-2 bits of each frame read wrong (0x8000 / 0x4000 contamination), so the
-  // data line isn't settled at whatever instant we sample. Rather than keep guessing the
-  // edge, sample each bit at +0..+4 us after the clock rising edge, rebuild the 16-bit
-  // frame for every offset, and count how many come out as clean LED frames (LED marker
-  // 0x4000 set, no bits outside the valid LED mask). The offset with the most clean LED
-  // frames is the correct sample instant.
   const uint32_t clk = (uint32_t)1 << pinClock;
-  const uint32_t dm = (uint32_t)1 << pinData;
-  const uint32_t lm = (uint32_t)1 << pinLatch;
-  const uint16_t LEDMASK = 0x4000 | 0x1000 | 0x0400 | 0x0200 | 0x0100 | 0x0080 | 0x0001; // 0x5781
+  const uint32_t lat = (uint32_t)1 << pinLatch;
 
   for (;;)
   {
-    uint32_t cleanLed[5] = {0, 0, 0, 0, 0};
-    uint16_t example[5] = {0, 0, 0, 0, 0};
-    int frames = 0;
-    int64_t cap0 = esp_timer_get_time();
+    int64_t t0 = esp_timer_get_time();
+    uint32_t g = REG_READ(GPIO_IN_REG);
+    uint32_t prevClk = g & clk;
+    uint32_t prevLat = g & lat;
+    uint32_t iter = 0;
 
-    while (frames < 80 && (esp_timer_get_time() - cap0) < 120000)
+    // tight capture burst: detect clock-rising + latch-falling edges and decode
+    for (;;)
     {
-      // align to a frame: wait for latch HIGH (idle gap) then LOW (frame start)
-      int64_t w = esp_timer_get_time();
-      while (!(REG_READ(GPIO_IN_REG) & lm)) { if (esp_timer_get_time() - w > 5000) break; }
-      while ((REG_READ(GPIO_IN_REG) & lm)) { if (esp_timer_get_time() - w > 12000) break; }
-
-      uint16_t fr[5] = {0, 0, 0, 0, 0};
-      int nb = 0;
-      uint32_t prevClk = REG_READ(GPIO_IN_REG) & clk;
-      int64_t fstart = esp_timer_get_time();
-      while (nb < 16)
-      {
-        uint32_t g = REG_READ(GPIO_IN_REG);
-        if (g & lm) break; // latch high -> frame ended
-        uint32_t cur = g & clk;
-        if (cur && !prevClk)
-        {
-          int64_t e = esp_timer_get_time();
-          for (int o = 0; o < 5; o++)
-          {
-            while ((esp_timer_get_time() - e) < o) { /* spin to +o us */ }
-            uint16_t bit = (REG_READ(GPIO_IN_REG) & dm) ? 0 : 1; // data is inverted
-            fr[o] = (uint16_t)((fr[o] << 1) | bit);
-          }
-          nb++;
-        }
-        prevClk = cur;
-        if ((esp_timer_get_time() - fstart) > 3000) break; // frame timeout
-      }
-      if (nb == 16)
-      {
-        for (int o = 0; o < 5; o++)
-          if ((fr[o] & 0x4000) && !(fr[o] & ~LEDMASK)) { cleanLed[o]++; example[o] = fr[o]; }
-        frames++;
-      }
+      g = REG_READ(GPIO_IN_REG);
+      uint32_t curClk = g & clk;
+      uint32_t curLat = g & lat;
+      if (curClk && !prevClk) clockRisingISR(nullptr);   // sample + accumulate one bit
+      if (!curLat && prevLat) latchFallingISR(nullptr);  // release DATA after a button TX
+      prevClk = curClk;
+      prevLat = curLat;
+      if (((++iter) & 0x3FF) == 0 && (esp_timer_get_time() - t0) >= 24000) break;
     }
 
-    ESP_LOGI("ph", "=== %d frames; cleanLED count per sample offset after clock rising ===", frames);
-    for (int o = 0; o < 5; o++)
-      ESP_LOGI("ph", "  +%dus: cleanLED=%u  example=0x%04X", o, (unsigned) cleanLed[o], example[o]);
-    vTaskDelay(8000 / portTICK_PERIOD_MS);
+    vTaskDelay(6 / portTICK_PERIOD_MS); // yield to loopTask + idle (feeds the WDT)
   }
 }
 
@@ -780,6 +748,9 @@ void SBH20IO::logDebug()
            dbgIsrCalls, dbgLatchCalls, state.frameCounter,
            dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther,
            dbgLastLed, dbgLastDigit, dbgLastButton);
+  ESP_LOGD("sbh20dbg", "disp: assembled=0x%04X stable=0x%04X stableTemp=0x%04X changes=%u | curTemp=0x%04X targetTemp=0x%04X",
+           g_dbgDisp, g_dbgStable, g_dbgStableTemp, g_dbgChanges, state.currentTemperature, state.targetTemperature);
+  g_dbgChanges = 0;
   dbgCue = dbgDigit = dbgLed = dbgButton = dbgOther = 0;
 }
 
@@ -868,10 +839,12 @@ inline void SBH20IO::decodeDisplay(uint16_t frame)
   else if (frame & FRAME_DIGIT::POS_4)
   {
     value = (value & 0xFFF0) | digit;
+    g_dbgDisp = value;
     if (value != pValue)
     {
       pValue = value;
       debounce = 3;
+      g_dbgChanges++;
     }
     else
     {
@@ -882,6 +855,7 @@ inline void SBH20IO::decodeDisplay(uint16_t frame)
         largeDebounce = 250;
 
         stableValue = value;
+        g_dbgStable = stableValue;
         if (displayIsBlank(value))
         {
           if (state.targetTemperature != stableTemp)
@@ -897,6 +871,7 @@ inline void SBH20IO::decodeDisplay(uint16_t frame)
         else
         {
           stableTemp = stableValue;
+          g_dbgStableTemp = stableTemp;
         }
       }
       if (largeDebounce)
