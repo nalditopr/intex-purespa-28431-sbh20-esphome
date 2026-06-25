@@ -187,6 +187,7 @@ inline bool displayIsBlank(uint16_t v) { return (v & 0xFFF0) == ((DIGIT::OFF << 
 // diagnostic mirrors of decodeDisplay's internal state (read by logDebug)
 static volatile uint16_t g_dbgDisp = 0, g_dbgStable = 0, g_dbgStableTemp = 0;
 static volatile uint32_t g_dbgChanges = 0; // how often the assembled value flips (instability)
+static volatile uint32_t g_dbgReplies = 0; // button replies actually transmitted (DATA pulled low)
 
 volatile SBH20IO::State SBH20IO::state;
 volatile SBH20IO::Buttons SBH20IO::buttons;
@@ -752,9 +753,10 @@ void SBH20IO::logDebug()
            dbgIsrCalls, dbgLatchCalls, state.frameCounter,
            dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther,
            dbgLastLed, dbgLastDigit, dbgLastButton);
-  ESP_LOGD("sbh20dbg", "disp: assembled=0x%04X stable=0x%04X stableTemp=0x%04X changes=%u | curTemp=0x%04X targetTemp=0x%04X",
-           g_dbgDisp, g_dbgStable, g_dbgStableTemp, g_dbgChanges, state.currentTemperature, state.targetTemperature);
+  ESP_LOGD("sbh20dbg", "disp: assembled=0x%04X stable=0x%04X stableTemp=0x%04X changes=%u replies=%u | curTemp=0x%04X targetTemp=0x%04X",
+           g_dbgDisp, g_dbgStable, g_dbgStableTemp, g_dbgChanges, g_dbgReplies, state.currentTemperature, state.targetTemperature);
   g_dbgChanges = 0;
+  g_dbgReplies = 0;
   dbgCue = dbgDigit = dbgLed = dbgButton = dbgOther = 0;
 }
 
@@ -936,9 +938,12 @@ inline void SBH20IO::decodeLED(uint16_t frame)
   }
   else
   {
-    // LED status changed
+    // LED status changed -- require more identical reads to confirm than the ESP8266
+    // original (3). The ESP32's polled capture has residual single-bit noise that can
+    // briefly flip e.g. the FILTER bit; demanding a longer consistent run keeps those
+    // transients from toggling the switches while still tracking real ~0.5 s blinks.
     pFrame = frame;
-    count = 3;
+    count = 8;
   }
 }
 
@@ -997,6 +1002,7 @@ inline void SBH20IO::decodeButton(uint16_t frame)
   if (reply)
   {
     // pull DATA low to signal the button press (released on latch falling edge)
+    g_dbgReplies++;
     driveDataLow();
   }
 }
