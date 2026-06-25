@@ -202,6 +202,7 @@ private:
   static volatile uint16_t frameBuf[FRAME_BUF_SIZE];
   static volatile uint16_t frameBufHead;
   static volatile uint16_t frameBufTail;
+  static volatile uint32_t dbgIsrCalls, dbgLatchCalls;
 
 private:
   uint16_t convertDisplayToCelsius(uint16_t value) const;

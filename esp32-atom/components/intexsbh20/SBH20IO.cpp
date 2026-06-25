@@ -204,6 +204,8 @@ volatile uint16_t SBH20IO::dbgLastButton = 0;
 volatile uint16_t SBH20IO::frameBuf[SBH20IO::FRAME_BUF_SIZE];
 volatile uint16_t SBH20IO::frameBufHead = 0;
 volatile uint16_t SBH20IO::frameBufTail = 0;
+volatile uint32_t SBH20IO::dbgIsrCalls = 0;
+volatile uint32_t SBH20IO::dbgLatchCalls = 0;
 
 // ESP32 fast GPIO helpers (require GPIO < 32)
 inline bool SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
@@ -594,6 +596,7 @@ uint16_t SBH20IO::convertDisplayToCelsius(uint16_t value) const
 void SBH20IO::latchFallingISR(void *arg)
 {
   // release DATA after a button reply (was driven low in decodeButton)
+  dbgLatchCalls++;
   releaseData();
 }
 
@@ -601,6 +604,7 @@ void SBH20IO::clockRisingISR(void *arg)
 {
   static uint16_t frame = 0x0000;
   static uint16_t receivedBits = 0x0000;
+  dbgIsrCalls++;
   bool data = !readData();          // data bits are inverted
   bool enable = readLatch() == LOW; // latch low => frame in progress
 
@@ -652,8 +656,9 @@ void SBH20IO::clockRisingISR(void *arg)
 
 void SBH20IO::logDebug()
 {
-  ESP_LOGD("sbh20dbg", "cue=%u digit=%u led=%u btn=%u other=%u | lastLED=0x%04X lastDIGIT=0x%04X lastBTN=0x%04X",
-           dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther, dbgLastLed, dbgLastDigit, dbgLastButton);
+  ESP_LOGD("sbh20dbg", "isrCalls=%u latch=%u | cue=%u digit=%u led=%u btn=%u other=%u | lastLED=0x%04X lastDIGIT=0x%04X",
+           dbgIsrCalls, dbgLatchCalls, dbgCue, dbgDigit, dbgLed, dbgButton, dbgOther, dbgLastLed, dbgLastDigit);
+  dbgIsrCalls = dbgLatchCalls = 0;
   dbgCue = dbgDigit = dbgLed = dbgButton = dbgOther = 0;
 }
 
