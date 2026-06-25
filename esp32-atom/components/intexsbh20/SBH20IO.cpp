@@ -270,46 +270,61 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_rx", 4096, nullptr, 12, nullptr, 1);
 }
 
-// ESP32 polled receiver (pinned to core 1). The SB-H20 clock is ~140 kHz with ~2 us
-// high pulses; the Arduino GPIO interrupt path on the ESP32 is far too slow for that
-// (a live test caught only ~13% of clock edges -> 16-bit words aliased across multiple
-// real frames -> garbage). Instead we busy-poll the clock line flat-out on core 1
-// (WiFi lives on core 0) and run the proven per-edge bit decoder — clockRisingISR /
-// latchFallingISR, unchanged — on each detected edge. The full-speed poll catches every
-// edge (the diagnostic scanner already proved this). We capture in ~12 ms bursts then
-// sleep ~4 ms so the ESPHome loopTask (also core 1, lower priority) and the idle task
-// still get CPU and the task watchdog is fed; a burst sees dozens of frames, far more
-// than enough to read temperature and LED state, which repeat continuously.
+// ESP32 frame-bit capture (diagnostic). With all three pins now read correctly, the
+// poll produced all-ones frames -> data reads LOW at every clock-rising sample although
+// the line is HIGH 82% of the time, i.e. we are sampling the wrong clock edge and/or
+// the data/latch identity is still off. This records, at every clock edge, the raw
+// (un-inverted) DATA and LATCH levels for ~10 frames and prints them as bit strings:
+//   Lr = latch @ rising edge  (runs of equal value mark the frame window)
+//   Dr = data  @ rising edge   Df = data @ falling edge
+// so the true sample edge + frame alignment can be read directly.
+static const int CAP_MAX = 160;
+static uint8_t s_capRd[CAP_MAX], s_capRl[CAP_MAX], s_capFd[CAP_MAX], s_capFl[CAP_MAX];
 void SBH20IO::spiTask(void *arg)
 {
   const uint32_t clk = (uint32_t)1 << pinClock;
-  const uint32_t lat = (uint32_t)1 << pinLatch;
+  const uint32_t dm = (uint32_t)1 << pinData;
+  const uint32_t lm = (uint32_t)1 << pinLatch;
 
-  vTaskDelay(3000 / portTICK_PERIOD_MS); // let WiFi settle
+  vTaskDelay(4000 / portTICK_PERIOD_MS); // let WiFi settle
 
   for (;;)
   {
-    int64_t t0 = esp_timer_get_time();
+    int nr = 0, nf = 0;
     uint32_t g = REG_READ(GPIO_IN_REG);
     uint32_t prevClk = g & clk;
-    uint32_t prevLat = g & lat;
-    uint32_t iter = 0;
-
-    // tight capture burst: detect clock-rising + latch-falling edges and decode
-    for (;;)
+    int64_t t0 = esp_timer_get_time();
+    while (nr < CAP_MAX && (esp_timer_get_time() - t0) < 80000)
     {
       g = REG_READ(GPIO_IN_REG);
-      uint32_t curClk = g & clk;
-      uint32_t curLat = g & lat;
-      if (curClk && !prevClk) clockRisingISR(nullptr);   // sample + accumulate one bit
-      if (!curLat && prevLat) latchFallingISR(nullptr);  // release DATA after a button TX
-      prevClk = curClk;
-      prevLat = curLat;
-      // check the clock only every 1024 iterations so the timer call can't slow the poll
-      if (((++iter) & 0x3FF) == 0 && (esp_timer_get_time() - t0) >= 12000) break;
+      uint32_t cur = g & clk;
+      if (cur && !prevClk) { s_capRd[nr] = (g & dm) ? 1 : 0; s_capRl[nr] = (g & lm) ? 1 : 0; nr++; }
+      else if (!cur && prevClk && nf < CAP_MAX) { s_capFd[nf] = (g & dm) ? 1 : 0; s_capFl[nf] = (g & lm) ? 1 : 0; nf++; }
+      prevClk = cur;
     }
 
-    vTaskDelay(4 / portTICK_PERIOD_MS); // yield to loopTask + idle (feeds the WDT)
+    ESP_LOGI("cap", "=== nr=%d nf=%d  G%u=clk G%u=data G%u=latch  (Lr=latch@rise Dr=data@rise Df=data@fall) ===",
+             nr, nf, (unsigned) pinClock, (unsigned) pinData, (unsigned) pinLatch);
+    char line[200];
+    for (int base = 0; base < nr; base += 64)
+    {
+      int pos = 0;
+      for (int i = base; i < nr && i < base + 64; i++) pos += snprintf(line + pos, sizeof(line) - pos, "%d", s_capRl[i]);
+      ESP_LOGI("cap", "Lr[%3d] %s", base, line);
+      vTaskDelay(1);
+      pos = 0;
+      for (int i = base; i < nr && i < base + 64; i++) pos += snprintf(line + pos, sizeof(line) - pos, "%d", s_capRd[i]);
+      ESP_LOGI("cap", "Dr[%3d] %s", base, line);
+      vTaskDelay(1);
+    }
+    for (int base = 0; base < nf; base += 64)
+    {
+      int pos = 0;
+      for (int i = base; i < nf && i < base + 64; i++) pos += snprintf(line + pos, sizeof(line) - pos, "%d", s_capFd[i]);
+      ESP_LOGI("cap", "Df[%3d] %s", base, line);
+      vTaskDelay(1);
+    }
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
 }
 
