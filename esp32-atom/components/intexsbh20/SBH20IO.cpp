@@ -328,32 +328,18 @@ void SBH20IO::spiTask(void *arg)
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 
-  const uint32_t clk = (uint32_t)1 << pinClock;
-  const uint32_t lat = (uint32_t)1 << pinLatch;
+  // Capture is interrupt-driven on this core (core 1). The earlier busy-poll was blind to
+  // the clock for the ~2 us it spent running an inline decode, so it missed edges and ~half
+  // the frames came out as garbage -- and button replies landed unreliably. A hardware GPIO
+  // interrupt latches every edge no matter what the CPU is doing, so capture is clean (this
+  // is exactly how the working D1-mini build behaves), no yield gaps are needed, and the
+  // button reply (DATA low on the matching telegram, released on latch fall) is precise ->
+  // reliable TX. The earlier interrupt attempt only failed because the pins were swapped,
+  // which the auto-detect above now corrects.
+  attachInterruptArg(digitalPinToInterrupt(pinLatch), SBH20IO::latchFallingISR, nullptr, FALLING);
+  attachInterruptArg(digitalPinToInterrupt(pinClock), SBH20IO::clockRisingISR, nullptr, RISING);
 
-  for (;;)
-  {
-    int64_t t0 = esp_timer_get_time();
-    uint32_t g = REG_READ(GPIO_IN_REG);
-    uint32_t prevClk = g & clk;
-    uint32_t prevLat = g & lat;
-    uint32_t iter = 0;
-
-    // tight capture burst: detect clock-rising + latch-falling edges and decode
-    for (;;)
-    {
-      g = REG_READ(GPIO_IN_REG);
-      uint32_t curClk = g & clk;
-      uint32_t curLat = g & lat;
-      if (curClk && !prevClk) clockRisingISR(nullptr);   // sample + accumulate one bit
-      if (!curLat && prevLat) latchFallingISR(nullptr);  // release DATA after a button TX
-      prevClk = curClk;
-      prevLat = curLat;
-      if (((++iter) & 0x3FF) == 0 && (esp_timer_get_time() - t0) >= 24000) break;
-    }
-
-    vTaskDelay(6 / portTICK_PERIOD_MS); // yield to loopTask + idle (feeds the WDT)
-  }
+  vTaskDelete(nullptr); // the ISRs handle capture/decode/TX from here; this task is done
 }
 
 void SBH20IO::processFrames()
@@ -712,11 +698,12 @@ void SBH20IO::clockRisingISR(void *arg)
       else if (frame & FRAME_TYPE::DIGIT)
       {
         dbgDigit++; dbgLastDigit = frame;
-        // Decode inline. The poll task (not an ISR) calls this, so there is no need to
-        // defer to loop() via a ring buffer — and under the busy-poll that buffer was
-        // overflowing, dropping digit frames and breaking the 4-position display
-        // assembly that the temperature reading depends on.
-        decodeDisplay(frame);
+        // defer the heavier display decode to loop() via the ring buffer so this ISR
+        // stays short; loopTask has ample CPU now that capture is interrupt-driven, so
+        // the buffer drains without dropping frames
+        uint16_t dnext = (uint16_t)((frameBufHead + 1) & FRAME_BUF_MASK);
+        if (dnext != frameBufTail) { frameBuf[frameBufHead] = frame; frameBufHead = dnext; }
+        else { state.frameDropped++; }
       }
       else if (frame & FRAME_TYPE::LED)
       {
