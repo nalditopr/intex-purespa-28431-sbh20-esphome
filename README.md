@@ -36,6 +36,10 @@ controller and a couple of details differ. (The Raspberry Pi Pico W is a third o
 
 ### → ESP32 build (recommended): [esp32-atom/README.md](esp32-atom/README.md)
 
+Exposes a climate thermostat, Power/Filter/Bubble switches, a water-temperature sensor, an
+**Error** text sensor and a **Problem** binary sensor — with **all controls non-blocking** so
+the Home Assistant connection never stalls. Full wiring, pins and flashing are in that guide.
+
 The rest of this page is the **ESP8266 / Wemos D1 mini** build.
 
 ---
@@ -158,8 +162,12 @@ the signal wires.
 
 - [`piitaya/esphome-intexsbh20`](https://github.com/piitaya/esphome-intexsbh20) — the ESPHome component
 - [`jnsbyr/esp8266-intexsbh20`](https://github.com/jnsbyr/esp8266-intexsbh20) — protocol reverse engineering
+- [`DIYSCIP`](https://github.com/yorffoeg/diyscip) (Geoffroy HUBERT) — the receive-decode code the bundled `SBH20IO.*` capture is derived from (CC-BY-NC-SA-4.0)
 - [`RealByron/PicoW-Intex-PureSpa`](https://github.com/RealByron/PicoW-Intex-PureSpa) — Pico W variant
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE) — **except** the bundled `intexsbh20` receive code
+(`components/intexsbh20/SBH20IO.*` and the `esp32-atom/` copy), which is derived from DIYSCIP
+and licensed **CC-BY-NC-SA-4.0** (non-commercial). See the file headers and
+[esp32-atom/README.md](esp32-atom/README.md).

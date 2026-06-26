@@ -215,16 +215,6 @@ volatile uint16_t SBH20IO::frameBufHead = 0;
 volatile uint16_t SBH20IO::frameBufTail = 0;
 volatile uint32_t SBH20IO::dbgIsrCalls = 0;
 volatile uint32_t SBH20IO::dbgLatchCalls = 0;
-volatile uint32_t SBH20IO::dbgSpiTotal = 0;
-volatile uint32_t SBH20IO::dbgSpiLen16 = 0;
-volatile uint32_t SBH20IO::dbgSpiLenOther = 0;
-volatile uint32_t SBH20IO::dbgLastLen = 0;
-volatile uint16_t SBH20IO::dbgLastRaw = 0;
-volatile uint32_t SBH20IO::dbgMaxLen = 0;
-volatile uint16_t SBH20IO::dbgWord0 = 0;
-volatile uint16_t SBH20IO::dbgWord1 = 0;
-
-// (SPI-slave capture buffers removed — using the GPIO logic-analyzer probe below instead.)
 
 // ESP32 fast GPIO helpers (require GPIO < 32)
 inline bool SBH20IO::readData() { return (REG_READ(GPIO_IN_REG) & maskData) != 0; }
@@ -237,14 +227,6 @@ inline void SBH20IO::driveDataLow()
 inline void SBH20IO::releaseData()
 {
   REG_WRITE(GPIO_ENABLE_W1TC_REG, maskData); // disable driver -> input, pull-up high
-}
-
-// (legacy GPIO-ISR capture path retained below for reference/fallback; not used in the
-//  SPI-slave build — setup() starts spiTask instead.)
-void SBH20IO::installISRs(void *arg)
-{
-  attachInterruptArg(digitalPinToInterrupt(pinLatch), SBH20IO::latchFallingISR, arg, FALLING);
-  attachInterruptArg(digitalPinToInterrupt(pinClock), SBH20IO::clockRisingISR, arg, RISING);
 }
 
 // @TODO detect when latch signal stays low
@@ -275,18 +257,15 @@ void SBH20IO::setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t la
   xTaskCreatePinnedToCore(SBH20IO::spiTask, "sbh20_rx", 4096, nullptr, 12, nullptr, 1);
 }
 
-// ESP32 polled receiver (pinned to core 1), with clock/data auto-detection.
+// ESP32 receive-setup task (pinned to core 1), with clock/data auto-detection.
 //
-// The SB-H20 clock rings through the level shifter, so per-edge GPIO interrupts on the
-// ESP32 are unreliable; instead we busy-poll on core 1 (WiFi runs on core 0) and run the
-// proven per-edge decoder (clockRisingISR / latchFallingISR, unchanged from the D1-mini
-// path) on each detected edge, in ~24 ms bursts (> one 21 ms display cycle) with a ~6 ms
-// yield so the ESPHome loopTask + idle task still get CPU and the task watchdog is fed.
-//
-// It first auto-detects which signal pin is the clock — the clock has far more
-// transitions than data (the scan measured G19=6676 vs G22=905). The YAML clock_pin /
-// data_pin order has been a recurring trap; this makes the receiver self-correcting
-// regardless of how those are set.
+// Runs once at boot on core 1 so the timing-critical capture stays isolated from WiFi (core
+// 0). It first auto-detects which signal pin is the clock — the clock has far more
+// transitions than data (the scan measured G19=6676 vs G22=905), so the YAML clock_pin /
+// data_pin order doesn't matter — then installs the GPIO interrupts (clock-rising +
+// latch-falling) that do the actual capture and deletes itself. A hardware interrupt latches
+// every edge regardless of CPU load; the heavy 7-segment decode is deferred to the main loop
+// via a ring buffer.
 void SBH20IO::spiTask(void *arg)
 {
   vTaskDelay(3000 / portTICK_PERIOD_MS); // let WiFi settle

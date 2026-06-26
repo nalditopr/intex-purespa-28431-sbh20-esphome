@@ -6,8 +6,10 @@ RP2040/Pico W (`RealByron`) only — this is an ESP32-native firmware for the SB
 panel.
 
 > ✅ **Status: working — validated on a real Intex 28431E PureSpa Plus (SB-H20).**
-> Water temperature reads correctly and every control works from Home Assistant:
-> Power, Heater, Bubble, Filter, and temperature Up/Down (setpoint read **and** change).
+> Water temperature reads correctly and every control works from Home Assistant —
+> Power, Bubble and Filter, temperature (setpoint read **and** change), and Heat mode — plus an
+> **Error** diagnostic sensor and a **Problem** binary sensor for HA alerts. Every control
+> action is **non-blocking**, so nothing stalls the ESPHome loop or drops the API.
 
 ![SB-H20 to BSS138 to M5Stack Atom Lite wiring diagram](wiring/atom-wiring.png)
 
@@ -38,6 +40,42 @@ board.
    ISR; the 7-segment display decode runs in the main loop. Frames that don't form a
    plausible value (a temperature, a blank, an error, or a valid LED word) are rejected,
    which shrugs off the small amount of residual line noise.
+
+## Control model (non-blocking)
+
+Every control action **queues work and returns immediately** — the ESPHome loop is never
+blocked waiting on the panel, so the Home Assistant / API connection stays responsive even
+mid-press.
+
+- **Toggles** (Power / Filter / Bubble — Heat is driven by the climate Off/Heat mode, not a
+  separate switch) queue a single button press; the panel's new LED state is read back
+  asynchronously and published when it changes.
+- **Temperature** uses a **closed-loop sequencer**: read the panel's current setpoint, press
+  once toward the target, invalidate the cached reading, wait for the panel to re-show the
+  new value, then re-read and repeat until reached. Reading back after every press makes it
+  self-correcting — a press that only *reveals* the setpoint (without changing it) is simply
+  retried, and it can't overshoot — and the work is spread across loop iterations.
+- The **automatic setpoint read** (used to learn the target after boot, since the panel only
+  flashes it briefly) is likewise a single queued press, not a busy-wait.
+
+This matters because a blocking control stalls the loop for ~1–2 s waiting on the panel's
+beep ack, which can drop the native API and briefly flip the device to "unavailable".
+
+## Entities
+
+The component exposes these Home Assistant entities — list only the ones you want under the
+`intexsbh20:` block in `spa-atom.yaml` (each is optional). Enabling the `climate`, `switch`,
+`sensor` or `text_sensor` entities also requires the matching bare top-level platform key
+(`climate:` / `switch:` / `sensor:` / `text_sensor:` — see the top of `spa-atom.yaml`); only
+`binary_sensor` is auto-loaded for you.
+
+| Entity | Type | Notes |
+|--------|------|-------|
+| **Thermostat** | `climate` | Off / Heat, current + target temperature, heating action (idle/heating) |
+| **Power**, **Filter**, **Bubble** | `switch` | the three panel toggles |
+| **Water temperature** | `sensor` | °C, decoded from the panel's 7-segment display |
+| **Error** | `text_sensor` | the **English fault message** for the displayed code: `no water flow` (E90), `water temp too low` (E94), `water temp too high` (E95), `system error` (E96), `dry fire protection` (E97), `water temp sensor error` (E99), `heating aborted after 72h` (END); blank when clear, `error` for an unrecognised code. The build is fixed to English — automate on the message text, not the `Exx` code |
+| **Problem** | `binary_sensor` | `device_class: problem` — **on** when the panel shows an `Exx` fault, **auto-clears** when a normal temperature returns. Auto-loaded, so no bare `binary_sensor:` is needed in your YAML |
 
 ## Wiring (Atom Lite)
 
@@ -82,7 +120,10 @@ slow-blow** (≈2× the peak). A **10 µF** cap across the Atom 5V/GND smooths t
 
 ## Build / flash
 
-1. Copy your `secrets.yaml` (wifi + api_key + ota_password) next to `spa-atom.yaml`.
+1. Copy `secrets.yaml.example` → `secrets.yaml` next to `spa-atom.yaml` and fill in the four
+   keys — `wifi_ssid`, `wifi_password`, `ota_password`, and `api_key` (a base64 32-byte key:
+   generate it with the ESPHome dashboard key icon, or
+   `python -c "import secrets,base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"`).
 2. `esphome run spa-atom.yaml` (first compile pulls the ESP32 toolchain).
 3. Flash over USB-C, confirm WiFi + entities, then wire to the spa (5 V — **don't** power
    USB and the spa at the same time). Updates after that go over OTA.
@@ -103,7 +144,8 @@ Windows gotchas if you build there:
 | GPIO access | `digitalRead()` | direct `GPIO_IN_REG` / `GPIO_ENABLE_W1TS/W1TC` |
 | Capture core | the only core | GPIO ISRs installed from a task **pinned to core 1** |
 | CPU clock | must force 160 MHz | n/a (240 MHz, core-isolated) |
-| Setpoint read | blocking | **non-blocking** (a blocking read stalled the loop and dropped the HA API) |
+| Control actions | blocking (busy-wait for the panel ack) | **all non-blocking** — toggles queue one press; temperature uses a closed-loop read→press→re-read sequencer |
+| Entities | climate + switches + temp | adds an **Error** text sensor and a **Problem** binary sensor (`device_class: problem`, auto-clears) |
 | Framework | — | **`arduino`** required |
 
 Receive decoding, frame parsing, button logic and the climate/switch/sensor entities are
@@ -117,20 +159,21 @@ otherwise the proven `piitaya/esphome-intexsbh20` logic.
 | `esphome config` (schema / pins / codegen) | ✅ valid |
 | Compile on the ESP32 toolchain | ✅ zero errors |
 | Flashable `firmware.bin` | ✅ builds + flashes (HA/ESPHome box) |
-| **Runs on a real spa** | ✅ temp + all controls on an Intex 28431E PureSpa Plus |
+| **Runs on a real spa** | ✅ temp + all controls (non-blocking) + Error/Problem sensors on an Intex 28431E PureSpa Plus |
 
 ## Notes / limitations
 
 - Diagnostics log at **VERBOSE** level — set the logger to `VERBOSE` to see frame/decode
   stats; normal logs stay quiet.
-- A *manually* toggled control still blocks the loop briefly while it waits for the panel's
-  ack; if the device ever blips to "unavailable" right when you tap a control, that's why.
-  The **automatic** setpoint read (which used to stall the loop every 30 s and drop the
-  API) is non-blocking.
+- All control actions are **non-blocking** (see *Control model* above) — toggles, temperature
+  changes and the automatic setpoint read all queue work and return immediately, so tapping a
+  control never stalls the loop or drops the API.
 - `framework: arduino` is required (`attachInterruptArg`, `pinMode`, `REG_READ/WRITE`); an
   esp-idf variant would need rework.
 - Pins are constrained to GPIO 0–31. The Atom exposes G19/21/22/23/25 (+ Grove G26/G32) —
   all fine.
+- **Offline boot/crash debugging without the spa** — run the firmware in a simulator and read
+  the serial backtrace: see [`wokwi/README.md`](wokwi/README.md).
 
 ## License
 

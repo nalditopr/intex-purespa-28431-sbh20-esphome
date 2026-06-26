@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: CC-BY-NC-SA-4.0
  *
  * ============================ ESP32 PORT NOTES ============================
- * The SB-H20 panel speaks a 16-bit, 100 kHz, SPI-mode-3-like serial protocol
+ * The SB-H20 panel speaks a 16-bit, ~140 kHz, latch-framed serial protocol
  * (data sampled on clock rising edge, frame bounded by the latch line; data
  * bits inverted, MSB first). The only telegram we transmit is a button press:
  * the DATA line is pulled low for ~2 us after the latch goes high, once a
@@ -68,10 +68,6 @@ public:
   // ESP32: pins are supplied here (must be GPIO numbers < 32 for the fast ISR path)
   void setup(LANG language, uint8_t clockPin, uint8_t dataPin, uint8_t latchPin);
   void loop();
-
-  // Installs the clock/latch ISRs on whichever core calls this. Invoked from a
-  // task pinned to core 1 so the timing-critical ISRs run isolated from WiFi.
-  static void installISRs(void *arg);
 
   void logDebug(); // debug build: frame-type stats
 
@@ -205,10 +201,6 @@ private:
   static volatile uint16_t frameBufHead;
   static volatile uint16_t frameBufTail;
   static volatile uint32_t dbgIsrCalls, dbgLatchCalls;
-  static volatile uint32_t dbgSpiTotal, dbgSpiLen16, dbgSpiLenOther, dbgLastLen;
-  static volatile uint16_t dbgLastRaw;
-  static volatile uint32_t dbgMaxLen;
-  static volatile uint16_t dbgWord0, dbgWord1;
 
 private:
   uint16_t convertDisplayToCelsius(uint16_t value) const;
