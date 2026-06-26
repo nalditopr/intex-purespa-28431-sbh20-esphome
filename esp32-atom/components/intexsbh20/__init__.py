@@ -64,6 +64,10 @@ async def to_code(config):
 
 	if CONF_CLIMATE in config:
 		clim = await climate.new_climate(config[CONF_CLIMATE])
+		# wire the climate's Parented<> parent so get_parent()->sbh() is valid; without this
+		# get_parent() is null and SBHClimate::update()'s sbh->isAdjustingTarget() dereferences
+		# a null instance pointer (LoadProhibited crash on real hardware)
+		cg.add(clim.set_parent(var))
 		cg.add(var.set_climate(clim))
 
 	if CONF_POWER in config:
