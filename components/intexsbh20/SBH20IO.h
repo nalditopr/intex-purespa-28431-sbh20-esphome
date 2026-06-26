@@ -85,7 +85,7 @@ public:
   uint8_t isPowerOn() const;
   uint8_t isBuzzerOn() const;
 
-  void setTargetTemperature(int temp);
+  void setTargetTemperature(float temp);
 
   void setBubbleOn(bool on);
   void setFilterOn(bool on);
@@ -95,8 +95,13 @@ public:
   // true while a setpoint change is still being applied by the non-blocking sequencer
   bool isAdjustingTarget() const { return pendingTargetTemp != UNDEF::USHORT; }
 
-  // the in-flight requested setpoint (°C) while a non-blocking change is applying
-  int getRequestedTargetTemperature() const { return (int) pendingTargetTemp; }
+  // the in-flight requested setpoint as °C (for HA) while a non-blocking change is applying
+  float getRequestedTargetTemperature() const;
+
+  // the panel's native setpoint reading (the 7-seg digits in °F or °C), UNDEF if unknown
+  int getTargetTemperatureRaw() const;
+  // true if the panel is currently displaying temperatures in °F
+  bool isPanelFahrenheit() const;
 
   unsigned int getErrorValue() const;
   String getErrorMessage(unsigned int errorValue) const;

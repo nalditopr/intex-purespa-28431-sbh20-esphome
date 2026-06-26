@@ -460,21 +460,50 @@ uint8_t SBH20IO::isBuzzerOn() const
   return (state.ledStatus != UNDEF::USHORT) ? ((state.ledStatus & FRAME_LED::NO_BEEP) == 0) : UNDEF::BOOL;
 }
 
+// The sequencer works in the panel's OWN display units (°F or °C) so a °F panel lands on the
+// exact °F requested -- routing the target through whole °C loses up to ~1°F to rounding.
+int SBH20IO::getTargetTemperatureRaw() const
+{
+  return (state.targetTemperature != UNDEF::USHORT) ? (int) display2Num(state.targetTemperature)
+                                                    : (int) UNDEF::USHORT;
+}
+
+bool SBH20IO::isPanelFahrenheit() const
+{
+  uint16_t v = (state.targetTemperature != UNDEF::USHORT)    ? state.targetTemperature
+               : (state.currentTemperature != UNDEF::USHORT) ? state.currentTemperature
+                                                             : UNDEF::USHORT;
+  return (v != UNDEF::USHORT) && ((v & 0x000F) == DIGIT::LET_F);
+}
+
+float SBH20IO::getRequestedTargetTemperature() const
+{
+  if (pendingTargetTemp == UNDEF::USHORT)
+    return NAN;
+  return isPanelFahrenheit() ? ((float) pendingTargetTemp - 32.0f) * 5.0f / 9.0f
+                             : (float) pendingTargetTemp;
+}
+
 /**
  * request a new target water temperature (NON-BLOCKING)
  *
  * Records the request and returns immediately; tickControls() applies it as a closed loop.
- * The cached setpoint is invalidated so the sequencer reads a fresh value before acting,
- * and any in-flight temp press from a previous request is cancelled ("latest request wins").
+ * The request (°C from HA) is converted to the panel's NATIVE unit so the panel lands on the
+ * exact value asked for -- e.g. 100 °F = 37.78 °C must target 100 °F, not the 37 °C a
+ * whole-degree truncation would pick (which lands ~99 °F). The cached setpoint is invalidated
+ * so the sequencer reads a fresh value, and any in-flight temp press is cancelled.
  */
-void SBH20IO::setTargetTemperature(int temp)
+void SBH20IO::setTargetTemperature(float tempC)
 {
-  if (temp < WATER_TEMP::SET_MIN || temp > WATER_TEMP::SET_MAX)
+  if (tempC < WATER_TEMP::SET_MIN || tempC > WATER_TEMP::SET_MAX)
     return;
   if (isPowerOn() != true || state.error != ERROR::NONE)
     return;
 
-  pendingTargetTemp = (uint16_t) temp;
+  int nativeTarget = isPanelFahrenheit() ? (int) round(tempC * 9.0 / 5.0 + 32.0)
+                                         : (int) round(tempC);
+
+  pendingTargetTemp = (uint16_t) nativeTarget; // holds the panel's native target reading now
   pendingTargetSetMs = millis();
   lastControlStepMs = pendingTargetSetMs;  // measure the read-timeout from the request start
   pendingTempDir = 0;
@@ -521,7 +550,7 @@ void SBH20IO::tickControls()
   if (now - lastControlStepMs < CONTROL_STEP_MS)
     return;
 
-  int current = getTargetTemperature();
+  int current = getTargetTemperatureRaw(); // native panel units, matching pendingTargetTemp
 
   // We invalidate the cached setpoint after every press, so an UNDEF reading means the panel
   // hasn't re-shown the (new) setpoint yet -- wait for it (it re-latches on each blink).
