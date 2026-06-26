@@ -36,7 +36,7 @@ void SBHClimate::update()
 	// setpoint without changing it). Only attempt this when the spa is online,
 	// powered and error-free, and back off between tries so we don't spam the bus
 	// or the log while idle/disconnected.
-	if (targetTemp == SBH20IO::UNDEF::USHORT && !sbh->isAdjustingTarget() &&
+	if (targetTemp == SBH20IO::UNDEF::USHORT &&
 	    sbh->isOnline() && sbh->isPowerOn() == true && sbh->getErrorValue() == 0)
 	{
 		uint32_t now = millis();

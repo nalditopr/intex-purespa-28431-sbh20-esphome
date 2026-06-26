@@ -76,8 +76,3 @@ intexsbh20:
     name: Error
     icon: mdi:alert-circle
     entity_category: diagnostic
-  problem:
-    name: Problem
-    # device_class "problem" -> on = the panel is showing an Exx fault code (good for
-    # Home Assistant alerts/automations); clears automatically when a normal temp returns
-    icon: mdi:alert
