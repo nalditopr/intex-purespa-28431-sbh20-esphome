@@ -355,6 +355,7 @@ void SBH20IO::processFrames()
 void SBH20IO::loop()
 {
   processFrames();
+  tickControls(); // pace out any queued button presses (non-blocking)
 
   // Online = still receiving frames from the panel. (The original keyed this off state
   // *changes*, so the device flapped to offline whenever the spa sat idle with a steady
@@ -405,12 +406,12 @@ void SBH20IO::forceReadTargetTemperature()
   // Non-blocking setpoint read: queue a single "down" press and return immediately. The
   // ISR transmits it over the next button-poll telegrams and decodeDisplay captures the
   // setpoint the panel briefly reveals (the first down press only reveals it, it does not
-  // change it). The old path called changeTargetTemperature(), which BLOCKED the ESPHome
+  // change it). The old path BLOCKED the ESPHome
   // loop ~2 s waiting for a buzzer ACK -- that stalled the API and made Home Assistant
   // mark the whole device "unavailable"/unknown, and it repeated every 30 s while the
   // target was unknown. The caller's 30 s backoff is far longer than the panel's setpoint
   // display timeout, so each retry is a fresh reveal (never an accidental decrement).
-  if (isPowerOn() == true && state.error == ERROR::NONE && !state.buzzer)
+  if (isPowerOn() == true && state.error == ERROR::NONE && !state.buzzer && buttons.toggleTempDown == 0)
   {
     buttons.toggleTempDown = BUTTON::PRESS_COUNT;
   }
@@ -481,188 +482,155 @@ uint8_t SBH20IO::isBuzzerOn() const
 }
 
 /**
- * set desired water temperature by performing button up or down actions
- * repeatedly depending on temperature delta (blocking)
+ * request a new target water temperature (NON-BLOCKING)
+ *
+ * Records the request and returns immediately; tickControls() applies it as a closed loop.
+ * The cached setpoint is invalidated so the sequencer reads a fresh value before acting,
+ * and any in-flight temp press from a previous request is cancelled ("latest request wins").
  */
 void SBH20IO::setTargetTemperature(int temp)
 {
-  if (temp >= WATER_TEMP::SET_MIN && temp <= WATER_TEMP::SET_MAX)
-  {
-    if (isPowerOn() == true && state.error == ERROR::NONE)
-    {
-      // try to get initial temp
-      int setTemp = getTargetTemperature();
-      bool modifying = false;
-      if (setTemp == UNDEF::USHORT)
-      {
-        // trigger temp modification
-        changeTargetTemperature(-1);
-        modifying = true;
+  if (temp < WATER_TEMP::SET_MIN || temp > WATER_TEMP::SET_MAX)
+    return;
+  if (isPowerOn() != true || state.error != ERROR::NONE)
+    return;
 
-        // wait for temp readback (will take 2-3 blink durations)
-        int sleep = 20; // ms
-        int tries = 4 * BLINK::PERIOD / sleep;
-        do
-        {
-          delay(sleep);
-          setTemp = getTargetTemperature();
-          tries--;
-        } while (setTemp == UNDEF::USHORT && tries);
-
-        // check success
-        if (setTemp == UNDEF::USHORT)
-        {
-          // error, abort
-          DEBUG_MSG("\naborted\n");
-          delay(1);
-          return;
-        }
-      }
-
-      // modify desired temp
-      int deltaTemp = temp - setTemp;
-      while (deltaTemp)
-      {
-        if (deltaTemp > 0)
-        {
-          changeTargetTemperature(1);
-          if (modifying)
-          {
-            deltaTemp--;
-            setTemp++;
-          }
-        }
-        else
-        {
-          changeTargetTemperature(-1);
-          if (modifying)
-          {
-            deltaTemp++;
-            setTemp--;
-          }
-        }
-        modifying = true;
-      }
-      delay(1);
-    }
-  }
+  pendingTargetTemp = (uint16_t) temp;
+  pendingTargetSetMs = millis();
+  lastControlStepMs = pendingTargetSetMs;  // measure the read-timeout from the request start
+  pendingTempDir = 0;
+  pendingPressCount = 0;
+  pendingAwaitingRead = false;
+  buttons.toggleTempUp = 0;                // cancel any partial sequence from a prior request
+  buttons.toggleTempDown = 0;
+  state.targetTemperature = UNDEF::USHORT; // force a fresh reveal+read before computing the delta
 }
 
 /**
- * press specific button and wait for confirmation (blocking)
+ * Non-blocking closed-loop control sequencer, called every loop().
+ *
+ * Drives a queued setpoint change one press at a time: read the panel's current setpoint,
+ * press once toward the target, invalidate the cached reading, wait for the panel to
+ * re-show (re-latch) the new setpoint, then read again and repeat until reached. Reading
+ * after every press makes it self-correcting -- a press that only "reveals" the setpoint
+ * (no change) is simply retried, and it can't overshoot -- and it never blocks the loop.
+ * A press is "in flight" while its toggle counter is non-zero (the ISR decrements it as it
+ * transmits) or while the spa is acking (buzzer).
  */
-bool SBH20IO::pressButton(volatile unsigned int &buttonPressCount)
+void SBH20IO::tickControls()
 {
-  waitBuzzerOff();
-  unsigned int tries = BUTTON::ACK_TIMEOUT / BUTTON::ACK_CHECK_PERIOD;
-  buttonPressCount = BUTTON::PRESS_COUNT;
-  while (buttonPressCount && tries)
+  if (pendingTargetTemp == UNDEF::USHORT)
+    return; // idle
+
+  unsigned long now = millis();
+
+  // abort if the spa can no longer accept changes, after too many presses (safety cap), or
+  // if the whole request has run too long
+  if (isPowerOn() != true || state.error != ERROR::NONE ||
+      pendingPressCount >= CONTROL_MAX_PRESSES || (now - pendingTargetSetMs) > 120000)
   {
-    delay(BUTTON::ACK_CHECK_PERIOD);
-    tries--;
+    pendingTargetTemp = UNDEF::USHORT;
+    pendingAwaitingRead = false;
+    buttons.toggleTempUp = 0; // don't leave a press in flight once we declare idle
+    buttons.toggleTempDown = 0;
+    return;
   }
 
-  return tries;
+  // wait while a press is transmitting / being acked, and keep a settle gap between presses
+  if (state.buzzer || buttons.toggleTempUp || buttons.toggleTempDown)
+    return;
+  if (now - lastControlStepMs < CONTROL_STEP_MS)
+    return;
+
+  int current = getTargetTemperature();
+
+  // We invalidate the cached setpoint after every press, so an UNDEF reading means the panel
+  // hasn't re-shown the (new) setpoint yet -- wait for it (it re-latches on each blink).
+  if (current == (int) UNDEF::USHORT)
+  {
+    // No fresh reading yet. If a reveal/press has gone unanswered too long (e.g. a buzzer
+    // ack cleared the toggle counter before it transmitted), drop the await so we re-issue
+    // it. The press cap and overall timeout above bound this if the panel is truly dead.
+    if (pendingAwaitingRead && (now - lastControlStepMs > CONTROL_READ_TIMEOUT_MS))
+      pendingAwaitingRead = false;
+    // need a reading: nudge a reveal (a down press). If the display happened to be open and
+    // this changes the value, the feedback below corrects it. Don't stack reveals.
+    if (!pendingAwaitingRead && buttons.toggleTempDown == 0)
+    {
+      buttons.toggleTempDown = BUTTON::PRESS_COUNT;
+      pendingAwaitingRead = true;
+      pendingPressCount++;
+      lastControlStepMs = now;
+    }
+    return;
+  }
+
+  // fresh reading in hand
+  pendingAwaitingRead = false;
+
+  if (pendingTempDir == 0)
+  {
+    if (current == (int) pendingTargetTemp)
+    {
+      pendingTargetTemp = UNDEF::USHORT; // already at the target
+      return;
+    }
+    pendingTempDir = (current < (int) pendingTargetTemp) ? 1 : -1;
+  }
+
+  bool reached = (pendingTempDir > 0) ? (current >= (int) pendingTargetTemp)
+                                      : (current <= (int) pendingTargetTemp);
+  if (reached)
+  {
+    pendingTargetTemp = UNDEF::USHORT; // done
+    return;
+  }
+
+  // press once toward the target, then invalidate the cached setpoint so the next read is
+  // the fresh post-press value (this is what makes it self-correcting)
+  if (pendingTempDir > 0)
+    buttons.toggleTempUp = BUTTON::PRESS_COUNT;
+  else
+    buttons.toggleTempDown = BUTTON::PRESS_COUNT;
+  state.targetTemperature = UNDEF::USHORT;
+  pendingAwaitingRead = true;
+  pendingPressCount++;
+  lastControlStepMs = now;
 }
 
+// All toggles are NON-BLOCKING: if the state needs to change and no press for that button
+// is already in flight (and the spa isn't mid-ack/beep), queue one press and return. The
+// ISR transmits it; the new LED state is picked up asynchronously by decodeLED.
 void SBH20IO::setBubbleOn(bool on)
 {
-  if (on ^ (isBubbleOn() == true))
+  if ((on ^ (isBubbleOn() == true)) && buttons.toggleBubble == 0 && !state.buzzer)
   {
-    pressButton(buttons.toggleBubble);
+    buttons.toggleBubble = BUTTON::PRESS_COUNT;
   }
 }
 
 void SBH20IO::setFilterOn(bool on)
 {
-  if (on ^ (isFilterOn() == true))
+  if ((on ^ (isFilterOn() == true)) && buttons.toggleFilter == 0 && !state.buzzer)
   {
-    pressButton(buttons.toggleFilter);
+    buttons.toggleFilter = BUTTON::PRESS_COUNT;
   }
 }
 
 void SBH20IO::setHeaterOn(bool on)
 {
-  if (on ^ (isHeaterOn() == true || isHeaterStandby() == true))
+  if ((on ^ (isHeaterOn() == true || isHeaterStandby() == true)) && buttons.toggleHeater == 0 && !state.buzzer)
   {
-    pressButton(buttons.toggleHeater);
+    buttons.toggleHeater = BUTTON::PRESS_COUNT;
   }
 }
 
 void SBH20IO::setPowerOn(bool on)
 {
-  bool active = isPowerOn() == true;
-  if (on ^ active)
+  if ((on ^ (isPowerOn() == true)) && buttons.togglePower == 0 && !state.buzzer)
   {
-    pressButton(buttons.togglePower);
+    buttons.togglePower = BUTTON::PRESS_COUNT;
   }
-}
-
-/**
- * wait for buzzer to go off or timeout and delay for a cycle period
- */
-bool SBH20IO::waitBuzzerOff() const
-{
-  int tries = BUTTON::ACK_TIMEOUT / BUTTON::ACK_CHECK_PERIOD;
-  while (state.buzzer && tries)
-  {
-    delay(BUTTON::ACK_CHECK_PERIOD);
-    tries--;
-  }
-
-  // extra delay reduces chance to trigger auto repeat
-  if (tries)
-  {
-    delay(2 * CYCLE::PERIOD);
-    return true;
-  }
-  else
-  {
-    DEBUG_MSG("\nwBO fail");
-    return false;
-  }
-}
-
-/**
- * change water temperature setpoint by 1 degree and wait for confirmation (blocking)
- */
-bool SBH20IO::changeTargetTemperature(int up)
-{
-  if (isPowerOn() == true && state.error == ERROR::NONE)
-  {
-    // perform button action
-    waitBuzzerOff();
-    int tries = BUTTON::ACK_TIMEOUT / BUTTON::ACK_CHECK_PERIOD;
-    if (up > 0)
-    {
-      buttons.toggleTempUp = BUTTON::PRESS_COUNT;
-      while (buttons.toggleTempUp && tries)
-      {
-        delay(BUTTON::ACK_CHECK_PERIOD);
-        tries--;
-      }
-    }
-    else if (up < 0)
-    {
-      buttons.toggleTempDown = BUTTON::PRESS_COUNT;
-      while (buttons.toggleTempDown && tries)
-      {
-        delay(BUTTON::ACK_CHECK_PERIOD);
-        tries--;
-      }
-    }
-
-    if (tries && state.buzzer)
-    {
-      return true;
-    }
-    else
-    {
-      DEBUG_MSG("\ncWT fail");
-      return false;
-    }
-  }
-  return false;
 }
 
 uint16_t SBH20IO::convertDisplayToCelsius(uint16_t value) const
