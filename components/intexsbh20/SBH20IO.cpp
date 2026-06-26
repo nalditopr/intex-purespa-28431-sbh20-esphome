@@ -370,14 +370,14 @@ unsigned int SBH20IO::getDroppedFrames() const
   return state.frameDropped;
 }
 
-int SBH20IO::getCurrentTemperature() const
+float SBH20IO::getCurrentTemperature() const
 {
-  return (state.currentTemperature != UNDEF::USHORT) ? convertDisplayToCelsius(state.currentTemperature) : UNDEF::USHORT;
+  return (state.currentTemperature != UNDEF::USHORT) ? convertDisplayToCelsius(state.currentTemperature) : NAN;
 }
 
-int SBH20IO::getTargetTemperature() const
+float SBH20IO::getTargetTemperature() const
 {
-  return (state.targetTemperature != UNDEF::USHORT) ? convertDisplayToCelsius(state.targetTemperature) : UNDEF::USHORT;
+  return (state.targetTemperature != UNDEF::USHORT) ? convertDisplayToCelsius(state.targetTemperature) : NAN;
 }
 
 void SBH20IO::forceReadTargetTemperature()
@@ -641,22 +641,21 @@ void SBH20IO::setPowerOn(bool on)
   }
 }
 
-uint16_t SBH20IO::convertDisplayToCelsius(uint16_t value) const
+float SBH20IO::convertDisplayToCelsius(uint16_t value) const
 {
-  uint16_t celsiusValue = display2Num(value);
-  uint16_t tempUint = value & 0x000F;
-  if (tempUint == DIGIT::LET_F)
-  {
-    // convert °F to °C
-    float fValue = (float)celsiusValue;
-    celsiusValue = (uint16_t)round(((fValue - 32) * 5) / 9);
-  }
-  else if (tempUint != DIGIT::LET_C)
-  {
-    celsiusValue = UNDEF::USHORT;
-  }
+  int num = display2Num(value);
+  uint16_t tempUnit = value & 0x000F;
+  float celsius;
+  if (tempUnit == DIGIT::LET_F)
+    celsius = ((float) num - 32.0f) * 5.0f / 9.0f; // precise, NOT rounded to whole °C -- so HA's
+                                                   // °C->°F display round-trips back to the panel's
+                                                   // exact °F (39.44°C shows 103°F, 39°C would show 102)
+  else if (tempUnit == DIGIT::LET_C)
+    celsius = (float) num;
+  else
+    return NAN;
 
-  return (celsiusValue >= 0) && (celsiusValue <= 60) ? celsiusValue : UNDEF::USHORT;
+  return (celsius >= 0.0f && celsius <= 60.0f) ? celsius : NAN;
 }
 
 void SBH20IO::latchFallingISR(void *arg)

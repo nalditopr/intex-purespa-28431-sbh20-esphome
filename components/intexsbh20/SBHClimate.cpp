@@ -1,4 +1,5 @@
 #include "SBHClimate.h"
+#include <cmath>
 
 namespace esphome {
 namespace sbh20 {
@@ -23,18 +24,18 @@ void SBHClimate::update()
 		this->mode = esphome::climate::CLIMATE_MODE_HEAT;
 	}
 
-	int currentTemp = sbh->getCurrentTemperature();
+	float currentTemp = sbh->getCurrentTemperature();
 
-	this->current_temperature = (currentTemp != SBH20IO::UNDEF::USHORT) ? currentTemp : NAN;
+	this->current_temperature = currentTemp; // already NAN when unknown
 
-	int targetTemp = sbh->getTargetTemperature();
+	float targetTemp = sbh->getTargetTemperature();
 
 	// While a non-blocking change is applying, show the requested goal -- not the panel's
 	// intermediate reads and not the SET_MIN placeholder for an unknown setpoint -- so the
 	// HA setpoint doesn't visibly drop to the minimum and climb back as it steps.
 	if (sbh->isAdjustingTarget())
 		this->target_temperature = sbh->getRequestedTargetTemperature();
-	else if (targetTemp != SBH20IO::UNDEF::USHORT)
+	else if (!std::isnan(targetTemp))
 		this->target_temperature = targetTemp;
 	else
 		this->target_temperature = SBH20IO::WATER_TEMP::SET_MIN;
@@ -44,7 +45,7 @@ void SBHClimate::update()
 	// setpoint without changing it). Only attempt this when the spa is online,
 	// powered and error-free, and back off between tries so we don't spam the bus
 	// or the log while idle/disconnected.
-	if (targetTemp == SBH20IO::UNDEF::USHORT && !sbh->isAdjustingTarget() &&
+	if (std::isnan(targetTemp) && !sbh->isAdjustingTarget() &&
 	    sbh->isOnline() && sbh->isPowerOn() == true && sbh->getErrorValue() == 0)
 	{
 		uint32_t now = millis();

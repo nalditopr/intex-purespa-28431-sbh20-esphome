@@ -55,9 +55,7 @@ void IntexSBH20::update()
 		climate_->update();
 
 	if (water_temperature_) {
-		int temp = sbh_.getCurrentTemperature();
-		float water_temperature = (temp != SBH20IO::UNDEF::USHORT) ? temp : NAN;
-		water_temperature_->publish_state(water_temperature);
+		water_temperature_->publish_state(sbh_.getCurrentTemperature()); // °C (precise), NAN if unknown
 	}
 }
 }}

@@ -74,8 +74,8 @@ public:
 public:
   bool isOnline() const;
 
-  int getCurrentTemperature() const;
-  int getTargetTemperature() const;
+  float getCurrentTemperature() const;
+  float getTargetTemperature() const;
   void forceReadTargetTemperature();
 
   uint8_t isBubbleOn() const;
@@ -211,7 +211,7 @@ private:
   static volatile uint32_t dbgIsrCalls, dbgLatchCalls;
 
 private:
-  uint16_t convertDisplayToCelsius(uint16_t value) const;
+  float convertDisplayToCelsius(uint16_t value) const;
   void processFrames();
   void tickControls(); // non-blocking control sequencer, called from loop()
 
