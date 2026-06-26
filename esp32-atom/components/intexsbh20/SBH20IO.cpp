@@ -537,7 +537,7 @@ void SBH20IO::tickControls()
   if (isPowerOn() != true || state.error != ERROR::NONE ||
       pendingPressCount >= CONTROL_MAX_PRESSES || (now - pendingTargetSetMs) > 120000)
   {
-    ESP_LOGD("sbh20seq", "abort: power=%d err=0x%X presses=%d elapsed=%lums",
+    ESP_LOGV("sbh20seq", "abort: power=%d err=0x%X presses=%d elapsed=%lums",
              (int) isPowerOn(), (unsigned) state.error, pendingPressCount, now - pendingTargetSetMs);
     pendingTargetTemp = UNDEF::USHORT;
     pendingAwaitingRead = false;
@@ -567,7 +567,7 @@ void SBH20IO::tickControls()
     // this changes the value, the feedback below corrects it. Don't stack reveals.
     if (!pendingAwaitingRead && buttons.toggleTempDown == 0)
     {
-      ESP_LOGD("sbh20seq", "reveal: read UNDEF, send down-press (presses=%d)", pendingPressCount + 1);
+      ESP_LOGV("sbh20seq", "reveal: read UNDEF, send down-press (presses=%d)", pendingPressCount + 1);
       buttons.toggleTempDown = BUTTON::PRESS_COUNT;
       pendingAwaitingRead = true;
       pendingPressCount++;
@@ -578,13 +578,13 @@ void SBH20IO::tickControls()
 
   // fresh reading in hand
   pendingAwaitingRead = false;
-  ESP_LOGD("sbh20seq", "read current=%d target=%d dir=%d", current, (int) pendingTargetTemp, pendingTempDir);
+  ESP_LOGV("sbh20seq", "read current=%d target=%d dir=%d", current, (int) pendingTargetTemp, pendingTempDir);
 
   if (pendingTempDir == 0)
   {
     if (current == (int) pendingTargetTemp)
     {
-      ESP_LOGD("sbh20seq", "already at target=%d", (int) pendingTargetTemp);
+      ESP_LOGV("sbh20seq", "already at target=%d", (int) pendingTargetTemp);
       pendingTargetTemp = UNDEF::USHORT; // already at the target
       return;
     }
@@ -595,14 +595,14 @@ void SBH20IO::tickControls()
                                       : (current <= (int) pendingTargetTemp);
   if (reached)
   {
-    ESP_LOGD("sbh20seq", "reached target=%d (at %d)", (int) pendingTargetTemp, current);
+    ESP_LOGV("sbh20seq", "reached target=%d (at %d)", (int) pendingTargetTemp, current);
     pendingTargetTemp = UNDEF::USHORT; // done
     return;
   }
 
   // press once toward the target, then invalidate the cached setpoint so the next read is
   // the fresh post-press value (this is what makes it self-correcting)
-  ESP_LOGD("sbh20seq", "press %s toward %d (at %d)", pendingTempDir > 0 ? "UP" : "DOWN", (int) pendingTargetTemp, current);
+  ESP_LOGV("sbh20seq", "press %s toward %d (at %d)", pendingTempDir > 0 ? "UP" : "DOWN", (int) pendingTargetTemp, current);
   if (pendingTempDir > 0)
     buttons.toggleTempUp = BUTTON::PRESS_COUNT;
   else
@@ -859,7 +859,7 @@ inline void SBH20IO::decodeDisplay(uint16_t frame)
         g_dbgStable = stableValue;
         if (displayIsBlank(value))
         {
-          ESP_LOGD("sbh20rd", "stable BLANK -> capture target = stableTemp 0x%04X (%d)", stableTemp, display2Num(stableTemp));
+          ESP_LOGV("sbh20rd", "stable BLANK -> capture target = stableTemp 0x%04X (%d)", stableTemp, display2Num(stableTemp));
           if (state.targetTemperature != stableTemp)
           {
             state.targetTemperature = stableTemp;
@@ -872,7 +872,7 @@ inline void SBH20IO::decodeDisplay(uint16_t frame)
         }
         else
         {
-          ESP_LOGD("sbh20rd", "stable TEMP 0x%04X (%d)", stableValue, display2Num(stableValue));
+          ESP_LOGV("sbh20rd", "stable TEMP 0x%04X (%d)", stableValue, display2Num(stableValue));
           stableTemp = stableValue;
           g_dbgStableTemp = stableTemp;
           // a normal temperature is on the display -> any prior error code has cleared
