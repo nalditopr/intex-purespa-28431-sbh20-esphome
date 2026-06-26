@@ -95,6 +95,9 @@ public:
   // true while a setpoint change is still being applied by the non-blocking sequencer
   bool isAdjustingTarget() const { return pendingTargetTemp != UNDEF::USHORT; }
 
+  // the in-flight requested setpoint (°C) while a non-blocking change is applying
+  int getRequestedTargetTemperature() const { return (int) pendingTargetTemp; }
+
   unsigned int getErrorValue() const;
   String getErrorMessage(unsigned int errorValue) const;
 

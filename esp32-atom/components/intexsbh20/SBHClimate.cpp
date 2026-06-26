@@ -29,7 +29,15 @@ void SBHClimate::update()
 
 	int targetTemp = sbh->getTargetTemperature();
 
-	this->target_temperature = (targetTemp != SBH20IO::UNDEF::USHORT) ? targetTemp : SBH20IO::WATER_TEMP::SET_MIN;
+	// While a non-blocking change is applying, show the requested goal -- not the panel's
+	// intermediate reads and not the SET_MIN placeholder for an unknown setpoint -- so the
+	// HA setpoint doesn't visibly drop to the minimum and climb back as it steps.
+	if (sbh->isAdjustingTarget())
+		this->target_temperature = sbh->getRequestedTargetTemperature();
+	else if (targetTemp != SBH20IO::UNDEF::USHORT)
+		this->target_temperature = targetTemp;
+	else
+		this->target_temperature = SBH20IO::WATER_TEMP::SET_MIN;
 
 	// The panel only shows the setpoint briefly after a button press, so to learn
 	// the target temperature we nudge it with one "down" press (which reveals the
@@ -57,6 +65,8 @@ void SBHClimate::control(const esphome::climate::ClimateCall &call)
 	if (tt)
 	{
 		get_parent()->sbh()->setTargetTemperature(*tt);
+		this->target_temperature = *tt; // optimistic: reflect the goal in HA immediately
+		publish_state();
 	}
 
 	auto mode = call.get_mode();
