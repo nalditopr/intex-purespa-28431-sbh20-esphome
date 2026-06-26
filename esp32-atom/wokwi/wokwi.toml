@@ -1,0 +1,13 @@
+[wokwi]
+version = 1
+
+# Point these at the ESPHome build output. Build the CRASHING firmware first, e.g.:
+#   esphome compile spa-atom.yaml      (with the non-blocking build checked out)
+# then run from the esphome config dir:
+#   WOKWI_CLI_TOKEN=... wokwi-cli --timeout 60000 --serial-log-file serial.txt esp32-atom/wokwi
+#
+# Use the MERGED flash image (bootloader + partitions + app). Recent ESPHome writes it as
+# firmware.factory.bin; if yours doesn't have it, merge with esptool (see README.md here).
+# Adjust the name segment if your `name:` substitution differs from intex-spa-atom.
+firmware = "../.esphome/build/intex-spa-atom/.pioenvs/intex-spa-atom/firmware.factory.bin"
+elf      = "../.esphome/build/intex-spa-atom/.pioenvs/intex-spa-atom/firmware.elf"
